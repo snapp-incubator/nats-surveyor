@@ -194,9 +194,9 @@ func newSurveyorConnPool(opts *Options, reconnectCtr *prometheus.CounterVec) *na
 	return newNatsConnPool(opts.Logger, natsDefaults, natsOpts)
 }
 
-func (s *Surveyor) createStatszCollector() error {
+func (s *Surveyor) createStatszCollector() {
 	if s.opts.ExpectedServers == 0 {
-		return nil
+		return
 	}
 
 	if !s.opts.Accounts {
@@ -205,7 +205,6 @@ func (s *Surveyor) createStatszCollector() error {
 
 	s.statzC = NewStatzCollector(s.sysAcctPC.nc, s.logger, s.opts.ExpectedServers, s.opts.ServerResponseWait, s.opts.PollTimeout, s.opts.Accounts, s.opts.ConstLabels)
 	s.promRegistry.MustRegister(s.statzC)
-	return nil
 }
 
 // generates the TLS config for https
@@ -469,9 +468,7 @@ func (s *Surveyor) Start() error {
 	}
 
 	if s.statzC == nil {
-		if err := s.createStatszCollector(); err != nil {
-			return err
-		}
+		s.createStatszCollector()
 	}
 	s.startServiceObservations()
 	s.startJetStreamAdvisories()

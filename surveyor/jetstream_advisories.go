@@ -316,7 +316,7 @@ func (o *JSAdvisoryConfig) Validate() error {
 		return nil
 	}
 
-	return fmt.Errorf(strings.Join(errs, ", "))
+	return fmt.Errorf("%s", strings.Join(errs, ", "))
 }
 
 func (o *JSAdvisoryConfig) copy() *JSAdvisoryConfig {
