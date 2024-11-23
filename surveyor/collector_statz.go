@@ -435,7 +435,7 @@ func (sc *StatzCollector) handleResponse(msg *nats.Msg) {
 	m := &server.ServerStatsMsg{}
 
 	if err := unmarshalMsg(msg, m); err != nil {
-		//sc.logger.Warnf("Error unmarshalling statz json: %v", err)
+		sc.logger.Warnf("Error unmarshalling statz json: %v", err)
 	}
 
 	sc.Lock()
