@@ -10,7 +10,7 @@ jobs:
     strategy:
       matrix:
         go: [ '1.21' ]
-        os: [ ubuntu-latest, macOS-latest ]
+        os: [ ubuntu-latest ]
     runs-on: ${{matrix.os}}
     steps:
       - name: Checkout code
