@@ -16,11 +16,10 @@ package surveyor
 import (
 	"context"
 	"fmt"
+	"github.com/nats-io/nats.go"
 	"strconv"
 	"sync"
 	"time"
-
-	"github.com/nats-io/nats.go"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
@@ -143,12 +142,14 @@ func (o *jsConfigListListener) gatherData(ctx context.Context, interval time.Dur
 		select {
 		case <-ticker.C:
 			o.Lock()
+			logrus.Println("-------- starting gathering data ", time.Now())
 			for str := range o.js.Streams() {
 				o.StreamHandler(str)
 				for con := range o.js.Consumers(str.Config.Name) {
 					o.ConsumerHandler(con)
 				}
 			}
+			logrus.Println("-------- Done gathering data ", time.Now())
 			o.Unlock()
 		// do operation
 		case <-ctx.Done():
@@ -158,14 +159,14 @@ func (o *jsConfigListListener) gatherData(ctx context.Context, interval time.Dur
 	}
 }
 
-func (o *jsConfigListListener) Start() error {
+func (o *jsConfigListListener) Start(natsCtx *natsContext) error {
 	o.Lock()
 	defer o.Unlock()
 	if o.pc != nil {
 		// already started
 		return nil
 	}
-	pc, err := o.cp.Get(&natsContext{})
+	pc, err := o.cp.Get(natsCtx)
 	if err != nil {
 		return fmt.Errorf("nats connection failed. error: %v", err)
 	}
@@ -200,9 +201,11 @@ func (o *jsConfigListListener) StreamHandler(streamInfo *nats.StreamInfo) {
 			"stream_name":    streamInfo.Config.Name,
 		},
 	).Set(1)
+
 	o.metrics.jsStreamRaftInfo.DeletePartialMatch(prometheus.Labels{
 		"stream_name": streamInfo.Config.Name,
 	})
+
 	o.metrics.jsStreamRaftInfo.With(
 		prometheus.Labels{
 			"stream_name":   streamInfo.Config.Name,
@@ -210,6 +213,7 @@ func (o *jsConfigListListener) StreamHandler(streamInfo *nats.StreamInfo) {
 			"replica_count": strconv.Itoa(len(streamInfo.Cluster.Replicas)),
 		},
 	).Set(1)
+
 	o.metrics.jsStreamRaftPeerInfo.DeletePartialMatch(prometheus.Labels{
 		"stream_name": streamInfo.Config.Name,
 	})

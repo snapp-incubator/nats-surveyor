@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/nats-io/nats.go"
 	"net"
 	"net/http"
 	"os"
@@ -30,7 +31,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
@@ -61,6 +61,8 @@ type Options struct {
 	Seed                 string
 	NATSUser             string
 	NATSPassword         string
+	NATSAuthUser         string
+	NATSAuthPassword     string
 	PollTimeout          time.Duration
 	ExpectedServers      int
 	ServerResponseWait   time.Duration
@@ -112,16 +114,14 @@ type Surveyor struct {
 	jsAdvisoryManager    *JSAdvisoryManager
 	jsAdvisoryFSWatcher  *jsAdvisoryFSWatcher
 	jsConfigListListener *jsConfigListListener
-	//jsConfigListManager *JSConfigListManager
-	//jsConfigListFSWatcher *jsConfigListFSWatcher
-	listener            net.Listener
-	logger              *logrus.Logger
-	opts                Options
-	promRegistry        *prometheus.Registry
-	statzC              *StatzCollector
-	serviceObsManager   *ServiceObsManager
-	serviceObsFSWatcher *serviceObsFSWatcher
-	sysAcctPC           *pooledNatsConn
+	listener             net.Listener
+	logger               *logrus.Logger
+	opts                 Options
+	promRegistry         *prometheus.Registry
+	statzC               *StatzCollector
+	serviceObsManager    *ServiceObsManager
+	serviceObsFSWatcher  *serviceObsFSWatcher
+	sysAcctPC            *pooledNatsConn
 }
 
 // NewSurveyor creates a surveyor
@@ -391,7 +391,11 @@ func (s *Surveyor) startJetStreamAdvisories() {
 }
 
 func (s *Surveyor) startJetStreamConfigList() {
-	err := s.jsConfigListListener.Start()
+	natsCtx := &natsContext{
+		Username: s.opts.NATSAuthUser,
+		Password: s.opts.NATSAuthPassword,
+	}
+	err := s.jsConfigListListener.Start(natsCtx)
 	if err != nil {
 		s.logger.Errorf("failed to start config list listener. error: %s", err.Error())
 		return
