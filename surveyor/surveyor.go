@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/nats-io/nats.go"
 	"net"
 	"net/http"
 	"os"
@@ -30,7 +31,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
@@ -61,6 +61,8 @@ type Options struct {
 	Seed                 string
 	NATSUser             string
 	NATSPassword         string
+	NATSAuthUser         string
+	NATSAuthPassword     string
 	PollTimeout          time.Duration
 	ExpectedServers      int
 	ServerResponseWait   time.Duration
@@ -112,16 +114,14 @@ type Surveyor struct {
 	jsAdvisoryManager    *JSAdvisoryManager
 	jsAdvisoryFSWatcher  *jsAdvisoryFSWatcher
 	jsConfigListListener *jsConfigListListener
-	//jsConfigListManager *JSConfigListManager
-	//jsConfigListFSWatcher *jsConfigListFSWatcher
-	listener            net.Listener
-	logger              *logrus.Logger
-	opts                Options
-	promRegistry        *prometheus.Registry
-	statzC              *StatzCollector
-	serviceObsManager   *ServiceObsManager
-	serviceObsFSWatcher *serviceObsFSWatcher
-	sysAcctPC           *pooledNatsConn
+	listener             net.Listener
+	logger               *logrus.Logger
+	opts                 Options
+	promRegistry         *prometheus.Registry
+	statzC               *StatzCollector
+	serviceObsManager    *ServiceObsManager
+	serviceObsFSWatcher  *serviceObsFSWatcher
+	sysAcctPC            *pooledNatsConn
 }
 
 // NewSurveyor creates a surveyor
@@ -194,9 +194,9 @@ func newSurveyorConnPool(opts *Options, reconnectCtr *prometheus.CounterVec) *na
 	return newNatsConnPool(opts.Logger, natsDefaults, natsOpts)
 }
 
-func (s *Surveyor) createStatszCollector() error {
+func (s *Surveyor) createStatszCollector() {
 	if s.opts.ExpectedServers == 0 {
-		return nil
+		return
 	}
 
 	if !s.opts.Accounts {
@@ -205,7 +205,6 @@ func (s *Surveyor) createStatszCollector() error {
 
 	s.statzC = NewStatzCollector(s.sysAcctPC.nc, s.logger, s.opts.ExpectedServers, s.opts.ServerResponseWait, s.opts.PollTimeout, s.opts.Accounts, s.opts.ConstLabels)
 	s.promRegistry.MustRegister(s.statzC)
-	return nil
 }
 
 // generates the TLS config for https
@@ -391,7 +390,11 @@ func (s *Surveyor) startJetStreamAdvisories() {
 }
 
 func (s *Surveyor) startJetStreamConfigList() {
-	err := s.jsConfigListListener.Start()
+	natsCtx := &natsContext{
+		Username: s.opts.NATSAuthUser,
+		Password: s.opts.NATSAuthPassword,
+	}
+	err := s.jsConfigListListener.Start(natsCtx)
 	if err != nil {
 		s.logger.Errorf("failed to start config list listener. error: %s", err.Error())
 		return
@@ -465,9 +468,7 @@ func (s *Surveyor) Start() error {
 	}
 
 	if s.statzC == nil {
-		if err := s.createStatszCollector(); err != nil {
-			return err
-		}
+		s.createStatszCollector()
 	}
 	s.startServiceObservations()
 	s.startJetStreamAdvisories()

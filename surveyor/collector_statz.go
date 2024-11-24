@@ -97,6 +97,7 @@ type statzDescs struct {
 	JetstreamClusterRaftGroupReplicaActive  *prometheus.Desc
 	JetstreamClusterRaftGroupReplicaCurrent *prometheus.Desc
 	JetstreamClusterRaftGroupReplicaOffline *prometheus.Desc
+	JetstreamClusterMetaLag                 *prometheus.Desc
 
 	// Account scope metrics
 	accCount                          *prometheus.Desc
@@ -306,7 +307,11 @@ func (sc *StatzCollector) buildDescs() {
 	sc.descs.JetstreamHAAssets = newPromDesc("jetstream_ha_assets", "Number of HA (R>1) assets used by NATS", sc.jsServerLabels)
 	sc.descs.JetstreamAPIRequests = newPromDesc("jetstream_api_requests", "Number of Jetstream API Requests processed. Value is 0 when server starts", sc.jsServerLabels)
 	sc.descs.JetstreamAPIErrors = newPromDesc("jetstream_api_errors", "Number of Jetstream API Errors. Value is 0 when server starts", sc.jsServerLabels)
-
+	sc.descs.JetstreamClusterMetaLag = newPromDesc(
+		"jetstream_cluster_meta_lag",
+		"Lag of metadata nodes in the JetStream cluster",
+		[]string{"server_id", "server_name", "peer_name", "cluster_name"},
+	)
 	// Jetstream Raft Groups
 	jsRaftGroupInfoLabelKeys := []string{"jetstream_domain", "raft_group", "server_id", "server_name", "cluster_name", "leader"}
 	sc.descs.JetstreamClusterRaftGroupInfo = newPromDesc("jetstream_cluster_raft_group_info", "Provides metadata about a RAFT Group", jsRaftGroupInfoLabelKeys)
@@ -874,6 +879,7 @@ func (sc *StatzCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- sc.descs.JetstreamClusterRaftGroupSize
 	ch <- sc.descs.JetstreamClusterRaftGroupLeader
 	ch <- sc.descs.JetstreamClusterRaftGroupReplicas
+	ch <- sc.descs.JetstreamClusterMetaLag
 	// Jetstream Cluster Replicas
 	ch <- sc.descs.JetstreamClusterRaftGroupReplicaActive
 	ch <- sc.descs.JetstreamClusterRaftGroupReplicaCurrent
@@ -998,6 +1004,7 @@ func (sc *StatzCollector) Collect(ch chan<- prometheus.Metric) {
 					// Domain is also at 'sm.Server.Domain'. Unknown if there's a semantic difference at present. See jsDomainLabelValue().
 				}
 				if sm.Stats.JetStream.Stats != nil {
+					logrus.Infoln("------doing it")
 					metrics.newGaugeMetric(sc.descs.JetstreamFilestoreUsedBytes, float64(sm.Stats.JetStream.Stats.Store), lblServerID)
 					metrics.newGaugeMetric(sc.descs.JetstreamFilestoreReservedBytes, float64(sm.Stats.JetStream.Stats.ReservedStore), lblServerID)
 					metrics.newGaugeMetric(sc.descs.JetstreamMemstoreUsedBytes, float64(sm.Stats.JetStream.Stats.Memory), lblServerID)
@@ -1007,6 +1014,14 @@ func (sc *StatzCollector) Collect(ch chan<- prometheus.Metric) {
 					// At present, Total does not include Errors. Keeping them separate
 					metrics.newCounterMetric(sc.descs.JetstreamAPIRequests, float64(sm.Stats.JetStream.Stats.API.Total), lblServerID)
 					metrics.newCounterMetric(sc.descs.JetstreamAPIErrors, float64(sm.Stats.JetStream.Stats.API.Errors), lblServerID)
+					logrus.Infoln("-----Replicas", sm.Stats.JetStream.Meta.Replicas)
+					for _, jsr := range sm.Stats.JetStream.Meta.Replicas {
+						if jsr == nil {
+							continue
+						}
+						jsClusterLagLabelValues := []string{sm.Server.ID, serverName(&sm.Server), jsr.Name, sm.Server.Cluster}
+						metrics.newGaugeMetric(sc.descs.JetstreamClusterMetaLag, float64(jsr.Lag), jsClusterLagLabelValues)
+					}
 				}
 
 				if sm.Stats.JetStream.Meta == nil {

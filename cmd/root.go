@@ -16,6 +16,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/nats-io/nats.go"
 	"os"
 	"os/signal"
 	"runtime"
@@ -25,7 +26,6 @@ import (
 
 	nested "github.com/antonfisher/nested-logrus-formatter"
 	"github.com/nats-io/nats-surveyor/surveyor"
-	"github.com/nats-io/nats.go"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -54,6 +54,8 @@ func rootCmdArgs(args []string) []string {
 		"-nkey":            "--nkey",
 		"-user":            "--user",
 		"-password":        "--password",
+		"-auth-user":       "--auth-user",
+		"-auth-password":   "--auth-password",
 		"-timeout":         "--timeout",
 		"-port":            "--port",
 		"-addr":            "--addr",
@@ -163,6 +165,13 @@ func init() {
 	// password
 	rootCmd.Flags().String("password", "", "NATS user password")
 	_ = viper.BindPFlag("password", rootCmd.Flags().Lookup("password"))
+	// user
+	rootCmd.Flags().String("auth-user", "", "NATS authenticated user name or token")
+	_ = viper.BindPFlag("auth-user", rootCmd.Flags().Lookup("auth-user"))
+
+	// password
+	rootCmd.Flags().String("auth-password", "", "NATS authenticated user password")
+	_ = viper.BindPFlag("auth-password", rootCmd.Flags().Lookup("auth-password"))
 
 	// count
 	rootCmd.Flags().IntP("count", "c", 1, "Expected number of servers (-1 for undefined).")
@@ -248,6 +257,8 @@ func getSurveyorOpts() *surveyor.Options {
 	opts.Seed = viper.GetString("seed")
 	opts.NATSUser = viper.GetString("user")
 	opts.NATSPassword = viper.GetString("password")
+	opts.NATSAuthUser = viper.GetString("auth-user")
+	opts.NATSAuthPassword = viper.GetString("auth-password")
 	opts.ExpectedServers = viper.GetInt("count")
 	opts.PollTimeout = viper.GetDuration("timeout")
 	opts.ListenPort = viper.GetInt("port")
