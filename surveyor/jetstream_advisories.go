@@ -352,26 +352,28 @@ func NewJetStreamAdvisoryConfigFromFile(f string) (*JSAdvisoryConfig, error) {
 // jsAdvisoryListener listens for JetStream advisories and expose them as prometheus data
 type jsAdvisoryListener struct {
 	sync.Mutex
-	config      *JSAdvisoryConfig
-	cp          *natsConnPool
-	logger      *logrus.Logger
-	metrics     *JSAdvisoryMetrics
-	pc          *pooledNatsConn
-	subAdvisory *nats.Subscription
-	subMetric   *nats.Subscription
+	config            *JSAdvisoryConfig
+	cp                *natsConnPool
+	logger            *logrus.Logger
+	metrics           *JSAdvisoryMetrics
+	pc                *pooledNatsConn
+	subAdvisory       *nats.Subscription
+	subMetric         *nats.Subscription
+	additionalContext *natsContext
 }
 
-func newJetStreamAdvisoryListener(config *JSAdvisoryConfig, cp *natsConnPool, logger *logrus.Logger, metrics *JSAdvisoryMetrics) (*jsAdvisoryListener, error) {
+func newJetStreamAdvisoryListener(config *JSAdvisoryConfig, cp *natsConnPool, logger *logrus.Logger, metrics *JSAdvisoryMetrics, additionalContext *natsContext) (*jsAdvisoryListener, error) {
 	err := config.Validate()
 	if err != nil {
 		return nil, fmt.Errorf("invalid JetStream advisory config for id: %s, account name: %s, error: %v", config.ID, config.AccountName, err)
 	}
 
 	return &jsAdvisoryListener{
-		config:  config,
-		cp:      cp,
-		logger:  logger,
-		metrics: metrics,
+		config:            config,
+		cp:                cp,
+		logger:            logger,
+		metrics:           metrics,
+		additionalContext: additionalContext,
 	}, nil
 }
 
@@ -400,8 +402,10 @@ func (o *jsAdvisoryListener) Start() error {
 		// already started
 		return nil
 	}
-
-	pc, err := o.cp.Get(o.natsContext())
+	natsCtx := o.natsContext()
+	natsCtx.Username = o.additionalContext.Username
+	natsCtx.Password = o.additionalContext.Password
+	pc, err := o.cp.Get(natsCtx)
 	if err != nil {
 		return fmt.Errorf("nats connection failed for id: %s, account name: %s, error: %v", o.config.ID, o.config.AccountName, err)
 	}
@@ -579,18 +583,20 @@ func (o *jsAdvisoryListener) Stop() {
 // JSAdvisoryManager exposes methods to operate on JetStream advisories
 type JSAdvisoryManager struct {
 	sync.Mutex
-	cp          *natsConnPool
-	listenerMap map[string]*jsAdvisoryListener
-	logger      *logrus.Logger
-	metrics     *JSAdvisoryMetrics
+	cp                *natsConnPool
+	listenerMap       map[string]*jsAdvisoryListener
+	logger            *logrus.Logger
+	metrics           *JSAdvisoryMetrics
+	additionalContext *natsContext
 }
 
 // newJetStreamAdvisoryManager creates a JSAdvisoryManager for managing JetStream advisories
-func newJetStreamAdvisoryManager(cp *natsConnPool, logger *logrus.Logger, metrics *JSAdvisoryMetrics) *JSAdvisoryManager {
+func newJetStreamAdvisoryManager(cp *natsConnPool, logger *logrus.Logger, metrics *JSAdvisoryMetrics, additionalContext *natsContext) *JSAdvisoryManager {
 	return &JSAdvisoryManager{
-		cp:      cp,
-		logger:  logger,
-		metrics: metrics,
+		cp:                cp,
+		logger:            logger,
+		metrics:           metrics,
+		additionalContext: additionalContext,
 	}
 }
 
@@ -669,8 +675,7 @@ func (am *JSAdvisoryManager) Set(config *JSAdvisoryConfig) error {
 	if found && reflect.DeepEqual(config, existingAdv.config) {
 		return nil
 	}
-
-	adv, err := newJetStreamAdvisoryListener(config, am.cp, am.logger, am.metrics)
+	adv, err := newJetStreamAdvisoryListener(config, am.cp, am.logger, am.metrics, am.additionalContext)
 	if err != nil {
 		return fmt.Errorf("could not set advisory for id: %s, account name: %s, error: %v", config.ID, config.AccountName, err)
 	}
@@ -718,10 +723,11 @@ func (am *JSAdvisoryManager) Delete(id string) error {
 
 type jsAdvisoryFSWatcher struct {
 	sync.Mutex
-	am      *JSAdvisoryManager
-	logger  *logrus.Logger
-	stopCh  chan struct{}
-	watcher *fsnotify.Watcher
+	am                *JSAdvisoryManager
+	logger            *logrus.Logger
+	stopCh            chan struct{}
+	watcher           *fsnotify.Watcher
+	additionalContext *natsContext
 }
 
 func newJetStreamAdvisoryFSWatcher(logger *logrus.Logger, am *JSAdvisoryManager) *jsAdvisoryFSWatcher {

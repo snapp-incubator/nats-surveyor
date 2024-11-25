@@ -142,14 +142,12 @@ func (o *jsConfigListListener) gatherData(ctx context.Context, interval time.Dur
 		select {
 		case <-ticker.C:
 			o.Lock()
-			logrus.Println("-------- starting gathering data ", time.Now())
 			for str := range o.js.Streams() {
 				o.StreamHandler(str)
 				for con := range o.js.Consumers(str.Config.Name) {
 					o.ConsumerHandler(con)
 				}
 			}
-			logrus.Println("-------- Done gathering data ", time.Now())
 			o.Unlock()
 		// do operation
 		case <-ctx.Done():

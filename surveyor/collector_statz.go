@@ -1004,7 +1004,6 @@ func (sc *StatzCollector) Collect(ch chan<- prometheus.Metric) {
 					// Domain is also at 'sm.Server.Domain'. Unknown if there's a semantic difference at present. See jsDomainLabelValue().
 				}
 				if sm.Stats.JetStream.Stats != nil {
-					logrus.Infoln("------doing it")
 					metrics.newGaugeMetric(sc.descs.JetstreamFilestoreUsedBytes, float64(sm.Stats.JetStream.Stats.Store), lblServerID)
 					metrics.newGaugeMetric(sc.descs.JetstreamFilestoreReservedBytes, float64(sm.Stats.JetStream.Stats.ReservedStore), lblServerID)
 					metrics.newGaugeMetric(sc.descs.JetstreamMemstoreUsedBytes, float64(sm.Stats.JetStream.Stats.Memory), lblServerID)
@@ -1014,7 +1013,6 @@ func (sc *StatzCollector) Collect(ch chan<- prometheus.Metric) {
 					// At present, Total does not include Errors. Keeping them separate
 					metrics.newCounterMetric(sc.descs.JetstreamAPIRequests, float64(sm.Stats.JetStream.Stats.API.Total), lblServerID)
 					metrics.newCounterMetric(sc.descs.JetstreamAPIErrors, float64(sm.Stats.JetStream.Stats.API.Errors), lblServerID)
-					logrus.Infoln("-----Replicas", sm.Stats.JetStream.Meta.Replicas)
 					for _, jsr := range sm.Stats.JetStream.Meta.Replicas {
 						if jsr == nil {
 							continue

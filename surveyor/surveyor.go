@@ -142,7 +142,7 @@ func NewSurveyor(opts *Options) (*Surveyor, error) {
 	serviceObsManager := newServiceObservationManager(cp, opts.Logger, serviceObsMetrics)
 	serviceFsWatcher := newServiceObservationFSWatcher(opts.Logger, serviceObsManager)
 	jsAdvisoryMetrics := NewJetStreamAdvisoryMetrics(promRegistry, opts.ConstLabels)
-	jsAdvisoryManager := newJetStreamAdvisoryManager(cp, opts.Logger, jsAdvisoryMetrics)
+	jsAdvisoryManager := newJetStreamAdvisoryManager(cp, opts.Logger, jsAdvisoryMetrics, &natsContext{Username: opts.NATSAuthUser, Password: opts.NATSAuthPassword})
 	jsFsWatcher := newJetStreamAdvisoryFSWatcher(opts.Logger, jsAdvisoryManager)
 
 	jsConfigListMetrics := NewJetStreamConfigListMetrics(promRegistry, opts.ConstLabels)
