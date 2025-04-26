@@ -37,20 +37,33 @@ var (
 	streamReplicationLagLabels   = []string{"stream_name", "peer_name"}
 	consumerReplicationLagLabels = []string{"stream_name", "consumer_name", "peer_name"}
 	DefaultScrapeInterval        = 10 * time.Second
+	streamLabel                  = []string{"stream_name"}
+	consumerLabel                = []string{"consumer_name"}
+	consumerStreamLabel          = []string{"consumer_name", "stream_name"}
+
 	//DefaultListenerID     = "default_listener"
 )
 
 type JSStreamConfigMetrics struct {
-	jsStreamConfig         *prometheus.GaugeVec
-	jsStreamRaftInfo       *prometheus.GaugeVec
-	jsStreamRaftPeerInfo   *prometheus.GaugeVec
-	jsStreamReplicationLag *prometheus.GaugeVec
+	jsStreamConfig           *prometheus.GaugeVec
+	jsStreamRaftInfo         *prometheus.GaugeVec
+	jsStreamRaftPeerInfo     *prometheus.GaugeVec
+	jsStreamReplicationLag   *prometheus.GaugeVec
+	jsStreamStateConsumerNum *prometheus.GaugeVec
+	jsStreamStateDeletedNum  *prometheus.GaugeVec
+	jsStreamStateSubjectNum  *prometheus.GaugeVec
 
-	jsConsumerConfig         *prometheus.GaugeVec
-	jsConsumerState          *prometheus.GaugeVec
-	jsConsumerRaftInfo       *prometheus.GaugeVec
-	jsConsumerRaftPeerInfo   *prometheus.GaugeVec
-	jsConsumerReplicationLag *prometheus.GaugeVec
+	jsConsumerConfig              *prometheus.GaugeVec
+	jsConsumerState               *prometheus.GaugeVec
+	jsConsumerRaftInfo            *prometheus.GaugeVec
+	jsConsumerRaftPeerInfo        *prometheus.GaugeVec
+	jsConsumerReplicationLag      *prometheus.GaugeVec
+	jsConsumerAckPendingNum       *prometheus.GaugeVec
+	jsConsumerPendingNum          *prometheus.GaugeVec
+	jsConsumerRedeliveredNum      *prometheus.GaugeVec
+	jsConsumerWaitingNum          *prometheus.GaugeVec
+	jsConsumerLastAckFloorSecNum  *prometheus.GaugeVec
+	jsConsumerLastDeliveredSecNum *prometheus.GaugeVec
 }
 
 func NewJetStreamConfigListMetrics(registry *prometheus.Registry, constLabels prometheus.Labels) *JSStreamConfigMetrics {
@@ -81,6 +94,21 @@ func NewJetStreamConfigListMetrics(registry *prometheus.Registry, constLabels pr
 			Help:        "raft peer info for streams",
 			ConstLabels: constLabels,
 		}, streamRaftPeerInfoLabels),
+		jsStreamStateConsumerNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_consumer_number"),
+			Help:        "consumer number of stream",
+			ConstLabels: constLabels,
+		}, streamLabel),
+		jsStreamStateDeletedNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_deleted_number"),
+			Help:        "deleted number of stream",
+			ConstLabels: constLabels,
+		}, streamLabel),
+		jsStreamStateSubjectNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_subject_number"),
+			Help:        "subject number for streams",
+			ConstLabels: constLabels,
+		}, streamLabel),
 		jsConsumerRaftInfo: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_raft_info"),
 			Help:        "raft info for consumer",
@@ -101,6 +129,36 @@ func NewJetStreamConfigListMetrics(registry *prometheus.Registry, constLabels pr
 			Help:        "replication lag of consumer peers",
 			ConstLabels: constLabels,
 		}, consumerReplicationLagLabels),
+		jsConsumerAckPendingNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_ack_pending_number"),
+			Help:        "pending ack number of consumer",
+			ConstLabels: constLabels,
+		}, consumerLabel),
+		jsConsumerPendingNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_pending_number"),
+			Help:        "pending number of consumer",
+			ConstLabels: constLabels,
+		}, consumerLabel),
+		jsConsumerRedeliveredNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_redelivered_number"),
+			Help:        "redelivered number of consumer",
+			ConstLabels: constLabels,
+		}, consumerLabel),
+		jsConsumerWaitingNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_waiting_number"),
+			Help:        "waiting number of consumer",
+			ConstLabels: constLabels,
+		}, consumerLabel),
+		jsConsumerLastAckFloorSecNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_last_ack_floor_number"),
+			Help:        "last ack floor number of consumer",
+			ConstLabels: constLabels,
+		}, consumerStreamLabel),
+		jsConsumerLastDeliveredSecNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_last_delivered_number"),
+			Help:        "last delivered number of consumer",
+			ConstLabels: constLabels,
+		}, consumerStreamLabel),
 	}
 
 	registry.MustRegister(metrics.jsStreamConfig)
@@ -108,10 +166,21 @@ func NewJetStreamConfigListMetrics(registry *prometheus.Registry, constLabels pr
 	registry.MustRegister(metrics.jsConsumerState)
 	registry.MustRegister(metrics.jsStreamRaftInfo)
 	registry.MustRegister(metrics.jsStreamRaftPeerInfo)
+	registry.MustRegister(metrics.jsStreamStateSubjectNum)
+	registry.MustRegister(metrics.jsStreamStateDeletedNum)
+	registry.MustRegister(metrics.jsStreamStateConsumerNum)
+
 	registry.MustRegister(metrics.jsConsumerRaftInfo)
 	registry.MustRegister(metrics.jsConsumerRaftPeerInfo)
 	registry.MustRegister(metrics.jsStreamReplicationLag)
 	registry.MustRegister(metrics.jsConsumerReplicationLag)
+	registry.MustRegister(metrics.jsConsumerWaitingNum)
+	registry.MustRegister(metrics.jsConsumerAckPendingNum)
+	registry.MustRegister(metrics.jsConsumerPendingNum)
+	registry.MustRegister(metrics.jsConsumerRedeliveredNum)
+	registry.MustRegister(metrics.jsConsumerLastDeliveredSecNum)
+	registry.MustRegister(metrics.jsConsumerLastAckFloorSecNum)
+
 	return metrics
 }
 
@@ -203,7 +272,6 @@ func (o *jsConfigListListener) StreamHandler(streamInfo *nats.StreamInfo) {
 	o.metrics.jsStreamRaftInfo.DeletePartialMatch(prometheus.Labels{
 		"stream_name": streamInfo.Config.Name,
 	})
-
 	o.metrics.jsStreamRaftInfo.With(
 		prometheus.Labels{
 			"stream_name":   streamInfo.Config.Name,
@@ -220,6 +288,7 @@ func (o *jsConfigListListener) StreamHandler(streamInfo *nats.StreamInfo) {
 			"stream_name": streamInfo.Config.Name,
 		},
 	)
+
 	for _, peer := range streamInfo.Cluster.Replicas {
 		o.metrics.jsStreamRaftPeerInfo.With(
 			prometheus.Labels{
@@ -239,6 +308,32 @@ func (o *jsConfigListListener) StreamHandler(streamInfo *nats.StreamInfo) {
 			},
 		).Set(float64(peer.Lag))
 	}
+
+	o.metrics.jsStreamStateConsumerNum.DeletePartialMatch(prometheus.Labels{
+		"stream_name": streamInfo.Config.Name,
+	})
+	o.metrics.jsStreamStateSubjectNum.DeletePartialMatch(prometheus.Labels{
+		"stream_name": streamInfo.Config.Name,
+	})
+	o.metrics.jsStreamStateDeletedNum.DeletePartialMatch(prometheus.Labels{
+		"stream_name": streamInfo.Config.Name,
+	})
+
+	o.metrics.jsStreamStateSubjectNum.With(
+		prometheus.Labels{
+			"stream_name": streamInfo.Config.Name,
+		},
+	).Set(float64(streamInfo.State.NumSubjects))
+	o.metrics.jsStreamStateDeletedNum.With(
+		prometheus.Labels{
+			"stream_name": streamInfo.Config.Name,
+		},
+	).Set(float64(streamInfo.State.NumDeleted))
+	o.metrics.jsStreamStateConsumerNum.With(
+		prometheus.Labels{
+			"stream_name": streamInfo.Config.Name,
+		},
+	).Set(float64(streamInfo.State.Consumers))
 }
 func convertBoolToString(value bool) string {
 	if value {
@@ -251,7 +346,6 @@ func (o *jsConfigListListener) ConsumerHandler(consumerInfo *nats.ConsumerInfo) 
 		o.logger.Infof("received empty consumer")
 		return
 	}
-
 	o.metrics.jsConsumerConfig.DeletePartialMatch(prometheus.Labels{
 		"stream_name":   consumerInfo.Stream,
 		"consumer_name": consumerInfo.Name,
@@ -265,7 +359,6 @@ func (o *jsConfigListListener) ConsumerHandler(consumerInfo *nats.ConsumerInfo) 
 			"is_pull":         IsPullBased(consumerInfo),
 		},
 	).Set(1)
-
 	o.metrics.jsConsumerState.DeletePartialMatch(prometheus.Labels{
 		"stream_name":   consumerInfo.Stream,
 		"consumer_name": consumerInfo.Name,
@@ -324,6 +417,61 @@ func (o *jsConfigListListener) ConsumerHandler(consumerInfo *nats.ConsumerInfo) 
 			},
 		).Set(float64(peer.Lag))
 	}
+	o.metrics.jsConsumerWaitingNum.DeletePartialMatch(prometheus.Labels{
+		"consumer_name": consumerInfo.Config.Name,
+	})
+	o.metrics.jsConsumerPendingNum.DeletePartialMatch(prometheus.Labels{
+		"consumer_name": consumerInfo.Config.Name,
+	})
+	o.metrics.jsConsumerAckPendingNum.DeletePartialMatch(prometheus.Labels{
+		"consumer_name": consumerInfo.Config.Name,
+	})
+	o.metrics.jsConsumerRedeliveredNum.DeletePartialMatch(prometheus.Labels{
+		"consumer_name": consumerInfo.Config.Name,
+	})
+
+	o.metrics.jsConsumerWaitingNum.With(
+		prometheus.Labels{
+			"consumer_name": consumerInfo.Config.Name,
+		},
+	).Set(float64(consumerInfo.NumWaiting))
+	o.metrics.jsConsumerPendingNum.With(
+		prometheus.Labels{
+			"consumer_name": consumerInfo.Config.Name,
+		},
+	).Set(float64(consumerInfo.NumPending))
+	o.metrics.jsConsumerAckPendingNum.With(
+		prometheus.Labels{
+			"consumer_name": consumerInfo.Config.Name,
+		},
+	).Set(float64(consumerInfo.NumAckPending))
+	o.metrics.jsConsumerRedeliveredNum.With(
+		prometheus.Labels{
+			"consumer_name": consumerInfo.Config.Name,
+		},
+	).Set(float64(consumerInfo.NumRedelivered))
+
+	o.metrics.jsConsumerLastDeliveredSecNum.DeletePartialMatch(prometheus.Labels{
+		"consumer_name": consumerInfo.Config.Name,
+		"stream_name":   consumerInfo.Stream,
+	})
+	o.metrics.jsConsumerLastAckFloorSecNum.DeletePartialMatch(prometheus.Labels{
+		"consumer_name": consumerInfo.Config.Name,
+		"stream_name":   consumerInfo.Stream,
+	})
+
+	o.metrics.jsConsumerLastDeliveredSecNum.With(
+		prometheus.Labels{
+			"consumer_name": consumerInfo.Config.Name,
+			"stream_name":   consumerInfo.Stream,
+		},
+	).Set(float64(consumerInfo.Delivered.Consumer))
+	o.metrics.jsConsumerLastAckFloorSecNum.With(
+		prometheus.Labels{
+			"consumer_name": consumerInfo.Config.Name,
+			"stream_name":   consumerInfo.Stream,
+		},
+	).Set(float64(consumerInfo.AckFloor.Consumer))
 }
 func IsPullBased(info *nats.ConsumerInfo) string {
 	isPull := info.Config.DeliverGroup == "" && info.Config.DeliverSubject == ""
