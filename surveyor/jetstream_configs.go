@@ -133,22 +133,22 @@ func NewJetStreamConfigListMetrics(registry *prometheus.Registry, constLabels pr
 			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_ack_pending_number"),
 			Help:        "pending ack number of consumer",
 			ConstLabels: constLabels,
-		}, consumerLabel),
+		}, consumerStreamLabel),
 		jsConsumerPendingNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_pending_number"),
 			Help:        "pending number of consumer",
 			ConstLabels: constLabels,
-		}, consumerLabel),
+		}, consumerStreamLabel),
 		jsConsumerRedeliveredNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_redelivered_number"),
 			Help:        "redelivered number of consumer",
 			ConstLabels: constLabels,
-		}, consumerLabel),
+		}, consumerStreamLabel),
 		jsConsumerWaitingNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_waiting_number"),
 			Help:        "waiting number of consumer",
 			ConstLabels: constLabels,
-		}, consumerLabel),
+		}, consumerStreamLabel),
 		jsConsumerLastAckFloorSecNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_last_ack_floor_number"),
 			Help:        "last ack floor number of consumer",
@@ -419,35 +419,43 @@ func (o *jsConfigListListener) ConsumerHandler(consumerInfo *nats.ConsumerInfo) 
 	}
 	o.metrics.jsConsumerWaitingNum.DeletePartialMatch(prometheus.Labels{
 		"consumer_name": consumerInfo.Config.Name,
+		"stream_name":   consumerInfo.Stream,
 	})
 	o.metrics.jsConsumerPendingNum.DeletePartialMatch(prometheus.Labels{
 		"consumer_name": consumerInfo.Config.Name,
+		"stream_name":   consumerInfo.Stream,
 	})
 	o.metrics.jsConsumerAckPendingNum.DeletePartialMatch(prometheus.Labels{
 		"consumer_name": consumerInfo.Config.Name,
+		"stream_name":   consumerInfo.Stream,
 	})
 	o.metrics.jsConsumerRedeliveredNum.DeletePartialMatch(prometheus.Labels{
 		"consumer_name": consumerInfo.Config.Name,
+		"stream_name":   consumerInfo.Stream,
 	})
 
 	o.metrics.jsConsumerWaitingNum.With(
 		prometheus.Labels{
 			"consumer_name": consumerInfo.Config.Name,
+			"stream_name":   consumerInfo.Stream,
 		},
 	).Set(float64(consumerInfo.NumWaiting))
 	o.metrics.jsConsumerPendingNum.With(
 		prometheus.Labels{
 			"consumer_name": consumerInfo.Config.Name,
+			"stream_name":   consumerInfo.Stream,
 		},
 	).Set(float64(consumerInfo.NumPending))
 	o.metrics.jsConsumerAckPendingNum.With(
 		prometheus.Labels{
 			"consumer_name": consumerInfo.Config.Name,
+			"stream_name":   consumerInfo.Stream,
 		},
 	).Set(float64(consumerInfo.NumAckPending))
 	o.metrics.jsConsumerRedeliveredNum.With(
 		prometheus.Labels{
 			"consumer_name": consumerInfo.Config.Name,
+			"stream_name":   consumerInfo.Stream,
 		},
 	).Set(float64(consumerInfo.NumRedelivered))
 
