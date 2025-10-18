@@ -418,16 +418,11 @@ func (o *jsConfigListListener) StreamHandler(streamInfo *nats.StreamInfo) {
 		},
 	).Set(float64(streamInfo.Config.MaxBytes))
 
-	// Convert MaxAge from time.Duration (nanoseconds) to seconds
-	maxAgeSeconds := 0.0
-	if streamInfo.Config.MaxAge > 0 {
-		maxAgeSeconds = streamInfo.Config.MaxAge.Seconds()
-	}
 	o.metrics.jsStreamLimitMaxAge.With(
 		prometheus.Labels{
 			"stream_name": streamInfo.Config.Name,
 		},
-	).Set(maxAgeSeconds)
+	).Set(streamInfo.Config.MaxAge.Seconds())
 
 	o.metrics.jsStreamLimitMaxMsgSize.With(
 		prometheus.Labels{
