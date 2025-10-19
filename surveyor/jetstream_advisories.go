@@ -727,11 +727,10 @@ func (am *JSAdvisoryManager) Delete(id string) error {
 
 type jsAdvisoryFSWatcher struct {
 	sync.Mutex
-	am                *JSAdvisoryManager
-	logger            *logrus.Logger
-	stopCh            chan struct{}
-	watcher           *fsnotify.Watcher
-	additionalContext *natsContext
+	am      *JSAdvisoryManager
+	logger  *logrus.Logger
+	stopCh  chan struct{}
+	watcher *fsnotify.Watcher
 }
 
 func newJetStreamAdvisoryFSWatcher(logger *logrus.Logger, am *JSAdvisoryManager) *jsAdvisoryFSWatcher {

@@ -39,7 +39,6 @@ var (
 	consumerReplicationLagLabels = []string{"stream_name", "consumer_name", "peer_name"}
 	DefaultScrapeInterval        = 10 * time.Second
 	streamLabel                  = []string{"stream_name"}
-	consumerLabel                = []string{"consumer_name"}
 	consumerStreamLabel          = []string{"consumer_name", "stream_name"}
 
 	//DefaultListenerID     = "default_listener"
