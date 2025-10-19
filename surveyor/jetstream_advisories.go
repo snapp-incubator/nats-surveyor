@@ -403,8 +403,12 @@ func (o *jsAdvisoryListener) Start() error {
 		return nil
 	}
 	natsCtx := o.natsContext()
-	natsCtx.Username = o.additionalContext.Username
-	natsCtx.Password = o.additionalContext.Password
+	if o.additionalContext.Username != "" {
+		natsCtx.Username = o.additionalContext.Username
+	}
+	if o.additionalContext.Password != "" {
+		natsCtx.Password = o.additionalContext.Password
+	}
 	pc, err := o.cp.Get(natsCtx)
 	if err != nil {
 		return fmt.Errorf("nats connection failed for id: %s, account name: %s, error: %v", o.config.ID, o.config.AccountName, err)
