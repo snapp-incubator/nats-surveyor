@@ -4,13 +4,74 @@
 *.dll
 *.so
 *.dylib
-.idea
 
-# Test binary, build with `go test -c`
+# Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool, specifically when used with LiteIDE
+# Compiled C++ files
 *.out
 
+# C extensions
+*.so
+
+# Code coverage profiles and other test artifacts
+coverage.*
+*.coverprofile
+profile.cov
+
+# Dependency directories (remove the comment below to include it)
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Application specific files
+node_modules
+.sass-cache
+
+# Distribution / packaging
+build/
+dist/
+downloads/
+lib/
+lib64/
+parts/
+sdist/
+var/
+MANIFEST
+
+
+# Editor/IDE
+.editorconfig*
+.idea/
+.vscode/
+*.swp
+.ipynp_*
+
+# Folder view configuration files
+.DS_Store
+Desktop.ini
+
+# Thumbnail cache files
+._*
+Thumbs.db
+
+# Files that might appear on external disks
+.Trashes
+
+# Config files
+config.yml
+config.yaml
+config.json
+
 nats-surveyor
-dist
