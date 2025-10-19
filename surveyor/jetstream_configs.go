@@ -16,10 +16,11 @@ package surveyor
 import (
 	"context"
 	"fmt"
-	"github.com/nats-io/nats.go"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/nats-io/nats.go"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
@@ -38,7 +39,6 @@ var (
 	consumerReplicationLagLabels = []string{"stream_name", "consumer_name", "peer_name"}
 	DefaultScrapeInterval        = 10 * time.Second
 	streamLabel                  = []string{"stream_name"}
-	consumerLabel                = []string{"consumer_name"}
 	consumerStreamLabel          = []string{"consumer_name", "stream_name"}
 
 	//DefaultListenerID     = "default_listener"
@@ -64,6 +64,13 @@ type JSStreamConfigMetrics struct {
 	jsConsumerWaitingNum          *prometheus.GaugeVec
 	jsConsumerLastAckFloorSecNum  *prometheus.GaugeVec
 	jsConsumerLastDeliveredSecNum *prometheus.GaugeVec
+
+	jsStreamLimitMaxMsgs      *prometheus.GaugeVec
+	jsStreamLimitMaxMsgsPer   *prometheus.GaugeVec
+	jsStreamLimitMaxBytes     *prometheus.GaugeVec
+	jsStreamLimitMaxAge       *prometheus.GaugeVec
+	jsStreamLimitMaxMsgSize   *prometheus.GaugeVec
+	jsStreamLimitMaxConsumers *prometheus.GaugeVec
 }
 
 func NewJetStreamConfigListMetrics(registry *prometheus.Registry, constLabels prometheus.Labels) *JSStreamConfigMetrics {
@@ -159,6 +166,36 @@ func NewJetStreamConfigListMetrics(registry *prometheus.Registry, constLabels pr
 			Help:        "last delivered number of consumer",
 			ConstLabels: constLabels,
 		}, consumerStreamLabel),
+		jsStreamLimitMaxMsgs: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_limit_max_msgs"),
+			Help:        "Maximum number of messages allowed in the stream (-1 for unlimited)",
+			ConstLabels: constLabels,
+		}, streamLabel),
+		jsStreamLimitMaxMsgsPer: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_limit_max_msgs_per_subject"),
+			Help:        "Maximum number of messages per subject allowed in the stream (-1 for unlimited)",
+			ConstLabels: constLabels,
+		}, streamLabel),
+		jsStreamLimitMaxBytes: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_limit_max_bytes"),
+			Help:        "Maximum total bytes allowed in the stream (-1 for unlimited)",
+			ConstLabels: constLabels,
+		}, streamLabel),
+		jsStreamLimitMaxAge: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_limit_max_age_seconds"),
+			Help:        "Maximum age of messages in seconds (0 for unlimited)",
+			ConstLabels: constLabels,
+		}, streamLabel),
+		jsStreamLimitMaxMsgSize: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_limit_max_msg_size"),
+			Help:        "Maximum message size in bytes (-1 for unlimited)",
+			ConstLabels: constLabels,
+		}, streamLabel),
+		jsStreamLimitMaxConsumers: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_limit_max_consumers"),
+			Help:        "Maximum number of consumers allowed (-1 for unlimited)",
+			ConstLabels: constLabels,
+		}, streamLabel),
 	}
 
 	registry.MustRegister(metrics.jsStreamConfig)
@@ -180,6 +217,13 @@ func NewJetStreamConfigListMetrics(registry *prometheus.Registry, constLabels pr
 	registry.MustRegister(metrics.jsConsumerRedeliveredNum)
 	registry.MustRegister(metrics.jsConsumerLastDeliveredSecNum)
 	registry.MustRegister(metrics.jsConsumerLastAckFloorSecNum)
+
+	registry.MustRegister(metrics.jsStreamLimitMaxMsgs)
+	registry.MustRegister(metrics.jsStreamLimitMaxMsgsPer)
+	registry.MustRegister(metrics.jsStreamLimitMaxBytes)
+	registry.MustRegister(metrics.jsStreamLimitMaxAge)
+	registry.MustRegister(metrics.jsStreamLimitMaxMsgSize)
+	registry.MustRegister(metrics.jsStreamLimitMaxConsumers)
 
 	return metrics
 }
@@ -334,6 +378,62 @@ func (o *jsConfigListListener) StreamHandler(streamInfo *nats.StreamInfo) {
 			"stream_name": streamInfo.Config.Name,
 		},
 	).Set(float64(streamInfo.State.Consumers))
+
+	// Stream Limits
+	o.metrics.jsStreamLimitMaxMsgs.DeletePartialMatch(prometheus.Labels{
+		"stream_name": streamInfo.Config.Name,
+	})
+	o.metrics.jsStreamLimitMaxMsgsPer.DeletePartialMatch(prometheus.Labels{
+		"stream_name": streamInfo.Config.Name,
+	})
+	o.metrics.jsStreamLimitMaxBytes.DeletePartialMatch(prometheus.Labels{
+		"stream_name": streamInfo.Config.Name,
+	})
+	o.metrics.jsStreamLimitMaxAge.DeletePartialMatch(prometheus.Labels{
+		"stream_name": streamInfo.Config.Name,
+	})
+	o.metrics.jsStreamLimitMaxMsgSize.DeletePartialMatch(prometheus.Labels{
+		"stream_name": streamInfo.Config.Name,
+	})
+	o.metrics.jsStreamLimitMaxConsumers.DeletePartialMatch(prometheus.Labels{
+		"stream_name": streamInfo.Config.Name,
+	})
+
+	o.metrics.jsStreamLimitMaxMsgs.With(
+		prometheus.Labels{
+			"stream_name": streamInfo.Config.Name,
+		},
+	).Set(float64(streamInfo.Config.MaxMsgs))
+
+	o.metrics.jsStreamLimitMaxMsgsPer.With(
+		prometheus.Labels{
+			"stream_name": streamInfo.Config.Name,
+		},
+	).Set(float64(streamInfo.Config.MaxMsgsPerSubject))
+
+	o.metrics.jsStreamLimitMaxBytes.With(
+		prometheus.Labels{
+			"stream_name": streamInfo.Config.Name,
+		},
+	).Set(float64(streamInfo.Config.MaxBytes))
+
+	o.metrics.jsStreamLimitMaxAge.With(
+		prometheus.Labels{
+			"stream_name": streamInfo.Config.Name,
+		},
+	).Set(streamInfo.Config.MaxAge.Seconds())
+
+	o.metrics.jsStreamLimitMaxMsgSize.With(
+		prometheus.Labels{
+			"stream_name": streamInfo.Config.Name,
+		},
+	).Set(float64(streamInfo.Config.MaxMsgSize))
+
+	o.metrics.jsStreamLimitMaxConsumers.With(
+		prometheus.Labels{
+			"stream_name": streamInfo.Config.Name,
+		},
+	).Set(float64(streamInfo.Config.MaxConsumers))
 }
 func convertBoolToString(value bool) string {
 	if value {

@@ -35,7 +35,7 @@ func TestJetStream_Load(t *testing.T) {
 	if err != nil {
 		t.Fatalf("advisory config error: %s", err)
 	}
-	adv, err := newJetStreamAdvisoryListener(config, cp, opt.Logger, metrics)
+	adv, err := newJetStreamAdvisoryListener(config, cp, opt.Logger, metrics, &natsContext{})
 	if err != nil {
 		t.Fatalf("advisory listener error: %s", err)
 	}
@@ -59,7 +59,7 @@ func TestJetStream_Load(t *testing.T) {
 	if err != nil {
 		t.Fatalf("observation config error: %s", err)
 	}
-	adv, err = newJetStreamAdvisoryListener(config, cp, opt.Logger, metrics)
+	adv, err = newJetStreamAdvisoryListener(config, cp, opt.Logger, metrics, &natsContext{})
 	if err != nil {
 		t.Fatalf("observation listener error: %s", err)
 	}
@@ -105,7 +105,7 @@ func TestJetStream_Handle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("advisory config error: %s", err)
 	}
-	adv, err := newJetStreamAdvisoryListener(config, cp, opt.Logger, metrics)
+	adv, err := newJetStreamAdvisoryListener(config, cp, opt.Logger, metrics, &natsContext{})
 	if err != nil {
 		t.Fatalf("advisory listener error: %s", err)
 	}
