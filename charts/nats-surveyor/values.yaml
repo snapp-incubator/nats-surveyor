@@ -1,6 +1,9 @@
 enabled: true
 
-image: ghcr.io/snapp-incubator/nats-surveyor:v0.5.19
+image:
+  repository: ghcr.io/snapp-incubator/nats-surveyor
+  # Defaults to .Chart.AppVersion (set automatically by the release workflow).
+  tag: ""
 
 nats:
   service: ""
