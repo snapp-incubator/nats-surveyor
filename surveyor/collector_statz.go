@@ -122,6 +122,7 @@ type statzDescs struct {
 	JetstreamClusterRaftGroupReplicaActive  *GaugeVec
 	JetstreamClusterRaftGroupReplicaCurrent *GaugeVec
 	JetstreamClusterRaftGroupReplicaOffline *GaugeVec
+	JetstreamClusterRaftGroupReplicaLag     *GaugeVec
 	// JetStream meta snapshot stats
 	JetstreamMetaSnapshotPendingEntries *GaugeVec
 	JetstreamMetaSnapshotPendingBytes   *GaugeVec
@@ -481,6 +482,7 @@ func (sc *StatzCollector) buildDescs() {
 	sc.descs.JetstreamClusterRaftGroupReplicaActive = newGaugeVec(newName("jetstream_cluster_raft_group_replica_peer_active"), "Jetstream RAFT Group Peer last Active time. Very large values may imply raft is stalled", sc.constLabels, jsClusterReplicaLabelKeys)
 	sc.descs.JetstreamClusterRaftGroupReplicaCurrent = newGaugeVec(newName("jetstream_cluster_raft_group_replica_peer_current"), "Jetstream RAFT Group Peer is current: 1 or not: 0", sc.constLabels, jsClusterReplicaLabelKeys)
 	sc.descs.JetstreamClusterRaftGroupReplicaOffline = newGaugeVec(newName("jetstream_cluster_raft_group_replica_peer_offline"), "Jetstream RAFT Group Peer is offline: 1 or online: 0", sc.constLabels, jsClusterReplicaLabelKeys)
+	sc.descs.JetstreamClusterRaftGroupReplicaLag = newGaugeVec(newName("jetstream_cluster_raft_group_replica_peer_lag"), "Jetstream RAFT Group Peer replication lag in log entries behind the leader", sc.constLabels, jsClusterReplicaLabelKeys)
 
 	// Meta snapshot stats
 	jsMetaSnapshotLabelKeys := []string{"server_id", "server_name", "cluster_name"}
@@ -1583,6 +1585,7 @@ func (sc *StatzCollector) MetricInfos() []MetricInfo {
 		sc.descs.JetstreamClusterRaftGroupReplicaActive,
 		sc.descs.JetstreamClusterRaftGroupReplicaCurrent,
 		sc.descs.JetstreamClusterRaftGroupReplicaOffline,
+		sc.descs.JetstreamClusterRaftGroupReplicaLag,
 		// JetStream meta snapshot stats
 		sc.descs.JetstreamMetaSnapshotPendingEntries,
 		sc.descs.JetstreamMetaSnapshotPendingBytes,
@@ -1859,6 +1862,7 @@ func (sc *StatzCollector) Collect(ch chan<- prometheus.Metric) {
 							} else {
 								metrics.newGaugeMetric(sc.descs.JetstreamClusterRaftGroupReplicaOffline, float64(0), jsClusterReplicaLabelValues)
 							}
+							metrics.newGaugeMetric(sc.descs.JetstreamClusterRaftGroupReplicaLag, float64(jsr.Lag), jsClusterReplicaLabelValues)
 						}
 
 					}
