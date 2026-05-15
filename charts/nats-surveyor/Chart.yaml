@@ -6,6 +6,6 @@ type: application
 # version and appVersion are overridden by the release workflow at package time
 # from the git tag. These defaults exist so local `helm install` from a checkout
 # produces something runnable.
-version: 0.10.1
-appVersion: "0.10.1"
+version: 0.10.4
+appVersion: "0.10.4"
 
