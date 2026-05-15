@@ -1,0 +1,16 @@
+{{- if and .Values.enabled .Values.prometheus.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-surveyor-monitor
+  labels:
+    app.snappcloud.io/name: nats-surveyor
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Release.Name }}-nats-surveyor
+  endpoints:
+    - port: {{ .Values.service.name }}
+      interval: {{ .Values.prometheus.serviceMonitor.interval }}
+      path: /metrics
+{{- end }}

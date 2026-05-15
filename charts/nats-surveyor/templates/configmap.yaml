@@ -1,0 +1,13 @@
+{{- if .Values.enabled }}
+# templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-nats-surveyor
+  namespace: {{ .Release.Namespace }}
+data:
+  rides.json: |-
+    {
+    "name":       "$G"
+    }
+{{- end }}

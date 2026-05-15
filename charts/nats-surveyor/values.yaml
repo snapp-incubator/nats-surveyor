@@ -1,0 +1,31 @@
+enabled: true
+
+image: ghcr.io/snapp-incubator/nats-surveyor:v0.5.19
+
+nats:
+  service: ""
+  port: 4222
+  adminSecret: nats-system-account
+
+auth:
+  enabled: true
+
+cluster:
+  size: 5
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 500Mi
+  limits:
+    cpu: 2
+    memory: 1Gi
+
+service:
+  port: 7777
+  name: metrics
+
+prometheus:
+  serviceMonitor:
+    enabled: true
+    interval: 10s

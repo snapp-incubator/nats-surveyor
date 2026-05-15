@@ -1,0 +1,7 @@
+---
+apiVersion: v2
+name: nats-surveyor
+description: NATS Surveyor Helm chart for monitoring NATS servers and JetStream
+type: application
+version: 0.6.0
+

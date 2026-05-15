@@ -1,0 +1,76 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-nats-surveyor
+  name: {{ .Release.Name }}-nats-surveyor
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Release.Name }}-nats-surveyor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Release.Name }}-nats-surveyor
+    spec:
+      containers:
+        - name: nats-surveyor
+          env:
+          {{- if .Values.auth.enabled }}
+            - name: CLOUD_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.nats.adminSecret }}
+                  key: cloud_password
+            - name: CLOUD_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.nats.adminSecret }}
+                  key: cloud_username
+            {{- end }}
+            - name: ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.nats.adminSecret }}
+                  key: admin_username
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.nats.adminSecret }}
+                  key: admin_password
+          image: {{ .Values.image }}
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+              name: {{ .Values.service.name }}
+          volumeMounts:
+            - name: surveyor-config-volume
+              mountPath: /etc/surveyor/jetstream
+          args:
+            - "-p"
+            - "{{ .Values.service.port }}"
+            - "--count"
+            - "{{ .Values.cluster.size }}"
+            - "--jetstream"
+            - "/etc/surveyor/jetstream"
+            - "-s"
+            - "nats://{{ .Values.nats.service | default .Release.Name }}:{{ .Values.nats.port }}"
+            - "--user"
+            - "$(ADMIN_USERNAME)"
+            - "--password"
+            - "$(ADMIN_PASSWORD)"
+            {{- if .Values.auth.enabled }}
+            - "--auth-user"
+            - "$(CLOUD_USERNAME)"
+            - "--auth-password"
+            - "$(CLOUD_PASSWORD)"
+            {{- end }}
+      volumes:
+        - name: surveyor-config-volume
+          configMap:
+            name: {{ .Release.Name }}-nats-surveyor
+{{- end }}

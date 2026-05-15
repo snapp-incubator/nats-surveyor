@@ -3,8 +3,11 @@ on:
   push:
     tags:
       - v[0-9]+.[0-9]+.[0-9]+
+permissions:
+  contents: read
+  packages: write
 jobs:
-  release:
+  image:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -44,4 +47,26 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.repository_owner }}" --password-stdin
+
+      - name: Package chart
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          helm package charts/nats-surveyor --version "${version}" --app-version "${version}"
+
+      - name: Push chart to ghcr.io
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          helm push "nats-surveyor-${version}.tgz" "oci://ghcr.io/${{ github.repository_owner }}/charts"
 
