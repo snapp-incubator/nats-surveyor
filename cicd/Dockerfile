@@ -1,5 +1,5 @@
-#syntax=docker/dockerfile-upstream:1.6
-FROM goreleaser as build
+#syntax=docker/dockerfile:1.13
+FROM goreleaser AS build
 
 ARG GO_APP
 
@@ -15,16 +15,21 @@ RUN <<EOT
   set -e 
   GORELEASER_DIST_DIR="/go/src/dist"
 
+  # If --single-target, artifacts.json only exists in os_arch target directory
+  if [ ! -f ${GORELEASER_DIST_DIR}/artifacts.json ]; then
+    GORELEASER_DIST_DIR="${GORELEASER_DIST_DIR}/${TARGETOS}_${TARGETARCH}"
+  fi
+
   if [ "${TARGETARCH}" = "arm" ]; then VARIANT="$(echo "${TARGETVARIANT}" | sed 's/^v//')"; fi
   BIN_PATH=$(jq -r ".[] |select(.type   == \"Binary\" and \
+                                .name   == \"${GO_APP}\" and \
                                 .goos   == \"${TARGETOS}\" and \
                                 .goarch == \"${TARGETARCH}\" and \
-                                (.goarm == \"${VARIANT}\" or .goarm == null) and \
-                                .extra.ID == \"${GO_APP}\") | .path" < "${GORELEASER_DIST_DIR}/artifacts.json")
+                                (.goarm == \"${VARIANT}\" or .goarm == null)) | .path" < "${GORELEASER_DIST_DIR}/artifacts.json")
   cp ${BIN_PATH} /go/bin
 EOT
 
-FROM alpine:3.19.1
+FROM alpine:3.23.3
 
 ARG GO_APP
 ENV GO_APP ${GO_APP}

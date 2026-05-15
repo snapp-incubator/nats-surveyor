@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/nats-io/nats.go"
@@ -13,7 +14,19 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-type natsContext struct {
+type ConnProvider interface {
+	Get(*NatsContext) (Conn, error)
+	Close(bool)
+}
+
+type Conn interface {
+	Conn() *nats.Conn
+	Close()
+	IsConnected() bool
+	IsClosed() bool
+}
+
+type NatsContext struct {
 	Name        string `json:"name"`
 	URL         string `json:"url"`
 	JWT         string `json:"jwt"`
@@ -21,14 +34,19 @@ type natsContext struct {
 	Credentials string `json:"credential"`
 	Nkey        string `json:"nkey"`
 	Token       string `json:"token"`
+	TokenFile   string `json:"token_file"`
 	Username    string `json:"username"`
 	Password    string `json:"password"`
 	TLSCA       string `json:"tls_ca"`
 	TLSCert     string `json:"tls_cert"`
 	TLSKey      string `json:"tls_key"`
+
+	// only passed programmatically
+	NatsOptsID string        `json:"nats_opts_id"`
+	NatsOpts   []nats.Option `json:"-"`
 }
 
-func (c *natsContext) copy() *natsContext {
+func (c *NatsContext) copy() *NatsContext {
 	if c == nil {
 		return nil
 	}
@@ -36,7 +54,7 @@ func (c *natsContext) copy() *natsContext {
 	return &cp
 }
 
-func (c *natsContext) hash() (string, error) {
+func (c *NatsContext) hash() (string, error) {
 	b, err := json.Marshal(c)
 	if err != nil {
 		return "", fmt.Errorf("error marshaling context to json: %v", err)
@@ -98,24 +116,42 @@ type pooledNatsConn struct {
 	closed bool
 }
 
+func (pc *pooledNatsConn) Conn() *nats.Conn {
+	return pc.nc
+}
+
+func (pc *pooledNatsConn) Close() {
+	pc.ReturnToPool()
+}
+
+func (pc *pooledNatsConn) IsConnected() bool {
+	return pc.nc.IsConnected()
+}
+
+func (pc *pooledNatsConn) IsClosed() bool {
+	return pc.nc.IsClosed()
+}
+
 func (pc *pooledNatsConn) ReturnToPool() {
-	pc.cp.Lock()
+	pc.cp.cacheMu.Lock()
 	pc.count--
 	if pc.count == 0 {
 		if pooledConn, ok := pc.cp.cache[pc.key]; ok && pc == pooledConn {
 			delete(pc.cp.cache, pc.key)
 		}
 		pc.closed = true
-		pc.cp.Unlock()
+		pc.cp.cacheMu.Unlock()
 		pc.nc.Close()
 		return
 	}
-	pc.cp.Unlock()
+	pc.cp.cacheMu.Unlock()
 }
 
 type natsConnPool struct {
-	sync.Mutex
 	cache        map[string]*pooledNatsConn
+	cacheMu      sync.Mutex
+	openConns    []*pooledNatsConn
+	openMu       sync.Mutex
 	logger       *logrus.Logger
 	group        *singleflight.Group
 	natsDefaults *natsContextDefaults
@@ -124,7 +160,8 @@ type natsConnPool struct {
 
 func newNatsConnPool(logger *logrus.Logger, natsDefaults *natsContextDefaults, natsOpts []nats.Option) *natsConnPool {
 	return &natsConnPool{
-		cache:        map[string]*pooledNatsConn{},
+		cache:        make(map[string]*pooledNatsConn, 0),
+		openConns:    make([]*pooledNatsConn, 0),
 		group:        &singleflight.Group{},
 		logger:       logger,
 		natsDefaults: natsDefaults,
@@ -134,8 +171,21 @@ func newNatsConnPool(logger *logrus.Logger, natsDefaults *natsContextDefaults, n
 
 const getPooledConnMaxTries = 10
 
+func (cp *natsConnPool) Close(force bool) {
+	cp.openMu.Lock()
+	defer cp.openMu.Unlock()
+
+	for _, c := range cp.openConns {
+		if force {
+			c.nc.Close()
+		} else {
+			c.Close()
+		}
+	}
+}
+
 // Get returns a *pooledNatsConn
-func (cp *natsConnPool) Get(cfg *natsContext) (*pooledNatsConn, error) {
+func (cp *natsConnPool) Get(cfg *NatsContext) (Conn, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("nats context must not be nil")
 	}
@@ -166,22 +216,22 @@ func (cp *natsConnPool) Get(cfg *natsContext) (*pooledNatsConn, error) {
 		return nil, err
 	}
 
-	for i := 0; i < getPooledConnMaxTries; i++ {
+	for range getPooledConnMaxTries {
 		connection, err := cp.getPooledConn(key, cfg)
 		if err != nil {
 			return nil, err
 		}
 
-		cp.Lock()
+		cp.cacheMu.Lock()
 		if connection.closed {
 			// ReturnToPool closed this while lock not held, try again
-			cp.Unlock()
+			cp.cacheMu.Unlock()
 			continue
 		}
 
 		// increment count out of the pool
 		connection.count++
-		cp.Unlock()
+		cp.cacheMu.Unlock()
 		return connection, nil
 	}
 
@@ -189,29 +239,48 @@ func (cp *natsConnPool) Get(cfg *natsContext) (*pooledNatsConn, error) {
 }
 
 // getPooledConn gets or establishes a *pooledNatsConn in a singleflight group, but does not increment its count
-func (cp *natsConnPool) getPooledConn(key string, cfg *natsContext) (*pooledNatsConn, error) {
-	conn, err, _ := cp.group.Do(key, func() (interface{}, error) {
-		cp.Lock()
+func (cp *natsConnPool) getPooledConn(key string, cfg *NatsContext) (*pooledNatsConn, error) {
+	conn, err, _ := cp.group.Do(key, func() (any, error) {
+		cp.cacheMu.Lock()
 		pooledConn, ok := cp.cache[key]
-		if ok && pooledConn.nc.IsConnected() {
-			cp.Unlock()
-			return pooledConn, nil
+		if ok {
+			if pooledConn.IsConnected() {
+				cp.cacheMu.Unlock()
+				return pooledConn, nil
+			}
+			if !pooledConn.IsClosed() {
+				cp.openMu.Lock()
+				openConnections := []*pooledNatsConn{pooledConn}
+				for _, c := range cp.openConns {
+					if !c.IsClosed() {
+						openConnections = append(openConnections, c)
+					}
+				}
+				cp.openConns = openConnections
+				cp.openMu.Unlock()
+			}
 		}
-		cp.Unlock()
+		cp.cacheMu.Unlock()
 
-		opts := cp.natsOpts
-		opts = append(opts, func(options *nats.Options) error {
+		opts := append(cp.natsOpts, cfg.NatsOpts...)
+
+		if cfg.TokenFile != "" && cfg.Username != "" {
+			opts = append(opts, nats.UserInfoHandler(func() (string, string) {
+				return cfg.Username, getTokenFromFile(cfg.TokenFile)
+			}))
+		} else if cfg.TokenFile != "" {
+			opts = append(opts, nats.TokenHandler(func() string {
+				return getTokenFromFile(cfg.TokenFile)
+			}))
+		} else if cfg.Token != "" {
+			opts = append(opts, nats.Token(cfg.Token))
+		} else if cfg.Username != "" || cfg.Password != "" {
+			opts = append(opts, nats.UserInfo(cfg.Username, cfg.Password))
+		}
+
+		opts = append(opts, func(o *nats.Options) error {
 			if cfg.Name != "" {
-				options.Name = cfg.Name
-			}
-			if cfg.Token != "" {
-				options.Token = cfg.Token
-			}
-			if cfg.Username != "" {
-				options.User = cfg.Username
-			}
-			if cfg.Password != "" {
-				options.Password = cfg.Password
+				o.Name = cfg.Name
 			}
 			return nil
 		})
@@ -252,9 +321,9 @@ func (cp *natsConnPool) getPooledConn(key string, cfg *natsContext) (*pooledNats
 			key: key,
 		}
 
-		cp.Lock()
+		cp.cacheMu.Lock()
 		cp.cache[key] = connection
-		cp.Unlock()
+		cp.cacheMu.Unlock()
 
 		return connection, err
 	})
@@ -268,4 +337,12 @@ func (cp *natsConnPool) getPooledConn(key string, cfg *natsContext) (*pooledNats
 		return nil, fmt.Errorf("not a pooledNatsConn")
 	}
 	return connection, nil
+}
+
+func getTokenFromFile(tokenfile string) string {
+	b, err := os.ReadFile(tokenfile)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }

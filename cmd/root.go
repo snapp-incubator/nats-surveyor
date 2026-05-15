@@ -16,26 +16,33 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/nats-io/nats.go"
+	"maps"
 	"os"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
 
 	nested "github.com/antonfisher/nested-logrus-formatter"
 	"github.com/nats-io/nats-surveyor/surveyor"
+	"github.com/nats-io/nats.go"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"github.com/thediveo/enumflag/v2"
 )
 
 var (
-	cfgFile string
-	rootCmd = &cobra.Command{
+	cfgFile    string
+	collectJsz = surveyor.CollectJszNone
+	jszFilters []surveyor.JszFilter
+	rootCmd    = &cobra.Command{
 		Use:     "nats-surveyor",
 		Short:   "Prometheus exporter for NATS",
+		Args:    cobra.NoArgs,
 		RunE:    run,
 		Version: Version,
 	}
@@ -75,6 +82,8 @@ func rootCmdArgs(args []string) []string {
 		"-prefix":          "--prefix",
 		"-observe":         "--observe",
 		"-jetstream":       "--jetstream",
+		"-gatewayz":        "--gatewayz",
+		"-jsz":             "--jsz",
 	}
 	newArgs := make([]string, 0)
 
@@ -142,6 +151,19 @@ func init() {
 	rootCmd.Flags().StringP("servers", "s", nats.DefaultURL, "NATS Cluster url(s)")
 	_ = viper.BindPFlag("servers", rootCmd.Flags().Lookup("servers"))
 
+	// count
+	rootCmd.Flags().IntP("count", "c", 1, "Expected number of servers (-1 for undefined).")
+	_ = viper.BindPFlag("count", rootCmd.Flags().Lookup("count"))
+
+	// timeout
+	rootCmd.Flags().Duration("timeout", surveyor.DefaultPollTimeout, "Polling timeout")
+	_ = viper.BindPFlag("timeout", rootCmd.Flags().Lookup("timeout"))
+
+	// server-discovery-timeout
+	rootCmd.Flags().DurationP("server-discovery-timeout", "", 500*time.Millisecond,
+		"Maximum wait time between responses from servers during server discovery.\nUse in conjunction with -count=-1.")
+	_ = viper.BindPFlag("server-discovery-timeout", rootCmd.Flags().Lookup("server-discovery-timeout"))
+
 	// creds
 	rootCmd.Flags().String("creds", "", "Credentials File")
 	_ = viper.BindPFlag("creds", rootCmd.Flags().Lookup("creds"))
@@ -173,25 +195,9 @@ func init() {
 	rootCmd.Flags().String("auth-password", "", "NATS authenticated user password")
 	_ = viper.BindPFlag("auth-password", rootCmd.Flags().Lookup("auth-password"))
 
-	// count
-	rootCmd.Flags().IntP("count", "c", 1, "Expected number of servers (-1 for undefined).")
-	_ = viper.BindPFlag("count", rootCmd.Flags().Lookup("count"))
-
-	// server-discovery-timeout
-	rootCmd.Flags().DurationP("server-discovery-timeout", "", 500*time.Millisecond, "Maximum wait time between responses from servers during server discovery. Use in conjunction with -count=-1.")
-	_ = viper.BindPFlag("server-discovery-timeout", rootCmd.Flags().Lookup("server-discovery-timeout"))
-
-	// timeout
-	rootCmd.Flags().Duration("timeout", surveyor.DefaultPollTimeout, "Polling timeout")
-	_ = viper.BindPFlag("timeout", rootCmd.Flags().Lookup("timeout"))
-
-	// port
-	rootCmd.Flags().IntP("port", "p", surveyor.DefaultListenPort, "Port to listen on.")
-	_ = viper.BindPFlag("port", rootCmd.Flags().Lookup("port"))
-
-	// addr
-	rootCmd.Flags().StringP("addr", "a", surveyor.DefaultListenAddress, "Network host to listen on.")
-	_ = viper.BindPFlag("addr", rootCmd.Flags().Lookup("addr"))
+	// token-file
+	rootCmd.Flags().String("token-file", "", "Path to a file with a bearer token")
+	_ = viper.BindPFlag("token-file", rootCmd.Flags().Lookup("token-file"))
 
 	// tlscert
 	rootCmd.Flags().String("tlscert", "", "Client certificate file for NATS connections.")
@@ -204,6 +210,18 @@ func init() {
 	// tlscacert
 	rootCmd.Flags().String("tlscacert", "", "Client certificate CA on NATS connections.")
 	_ = viper.BindPFlag("tlscacert", rootCmd.Flags().Lookup("tlscacert"))
+
+	// tlsfirst
+	rootCmd.Flags().Bool("tlsfirst", false, "Whether to use TLS First connections.")
+	_ = viper.BindPFlag("tlsfirst", rootCmd.Flags().Lookup("tlsfirst"))
+
+	// port
+	rootCmd.Flags().IntP("port", "p", surveyor.DefaultListenPort, "Port to listen on.")
+	_ = viper.BindPFlag("port", rootCmd.Flags().Lookup("port"))
+
+	// addr
+	rootCmd.Flags().StringP("addr", "a", surveyor.DefaultListenAddress, "Network host to listen on.")
+	_ = viper.BindPFlag("addr", rootCmd.Flags().Lookup("addr"))
 
 	// http-tlscert
 	rootCmd.Flags().String("http-tlscert", "", "Server certificate file (Enables HTTPS).")
@@ -238,16 +256,67 @@ func init() {
 	_ = viper.BindPFlag("jetstream", rootCmd.Flags().Lookup("jetstream"))
 
 	// accounts
-	rootCmd.Flags().Bool("accounts", false, "Export per account metrics")
+	rootCmd.Flags().Bool("accounts", false, "Export per-account metrics")
 	_ = viper.BindPFlag("accounts", rootCmd.Flags().Lookup("accounts"))
+
+	rootCmd.Flags().Bool("accounts-detailed", false, "Export granular per-account bytes and message metrics")
+	_ = viper.BindPFlag("accounts-detailed", rootCmd.Flags().Lookup("accounts-detailed"))
+
+	// gatewayz
+	rootCmd.Flags().Bool("gatewayz", false, "Export gateway metrics")
+	_ = viper.BindPFlag("gatewayz", rootCmd.Flags().Lookup("gatewayz"))
+
+	// raftz
+	rootCmd.Flags().Bool("raftz", false, "Export metalayer Raft group metrics from raftz endpoint")
+	_ = viper.BindPFlag("raftz", rootCmd.Flags().Lookup("raftz"))
+
+	// jsz streams
+	rootCmd.Flags().Var(
+		enumflag.New(&collectJsz, "jsz", surveyor.CollectJszIds, enumflag.EnumCaseInsensitive),
+		"jsz",
+		"Export jsz metrics, one of: all|streams|consumers",
+	)
+	_ = viper.BindPFlag("jsz", rootCmd.Flags().Lookup("jsz"))
+
+	// jsz limit
+	rootCmd.Flags().Int("jsz-limit", surveyor.DefaultJszLimit, "Limit the number of returned account jsz metrics")
+	_ = viper.BindPFlag("jsz-limit", rootCmd.Flags().Lookup("jsz-limit"))
+
+	// jsz leader only
+	rootCmd.Flags().Bool("jsz-leaders-only", false, "Fetch jsz metrics from stream and consumer leaders only")
+	_ = viper.BindPFlag("jsz-leaders-only", rootCmd.Flags().Lookup("jsz-leaders-only"))
+
+	// jsz filter list using enumflag
+	rootCmd.Flags().Var(
+		enumflag.NewSlice(&jszFilters, "jsz-filter", surveyor.JszFilterIds, enumflag.EnumCaseInsensitive),
+		"jsz-filter",
+		fmt.Sprintf("Fetch selected jsz metrics only(comma separated list). Metrics: %s",
+			strings.Join(surveyor.JszFiltersToStringSlice(slices.Sorted(maps.Keys(surveyor.JszFilterIds))), ",")),
+	)
+	_ = viper.BindPFlag("jsz-filter", rootCmd.Flags().Lookup("jsz-filter"))
+
+	// sys-req-prefix
+	rootCmd.Flags().String("sys-req-prefix", surveyor.DefaultSysReqPrefix, "Subject prefix for system requests ($SYS.REQ)")
+	_ = viper.BindPFlag("sys-req-prefix", rootCmd.Flags().Lookup("sys-req-prefix"))
+
+	// pprof
+	rootCmd.Flags().Bool("pprof", false, "Enable unauthenticated pprof endpoint at /debug/pprof/")
+	_ = viper.BindPFlag("pprof", rootCmd.Flags().Lookup("pprof"))
 
 	// log-level
 	rootCmd.Flags().String("log-level", "info", "Log level, one of: trace|debug|info|warn|error|fatal|panic")
 	_ = viper.BindPFlag("log-level", rootCmd.Flags().Lookup("log-level"))
 
+	rootCmd.Flags().SortFlags = false
+
+	// Automatically add environment variable info to all flags
+	rootCmd.Flags().VisitAll(func(flag *pflag.Flag) {
+		envVar := strings.ToUpper("NATS_SURVEYOR_" + strings.ReplaceAll(flag.Name, "-", "_"))
+		flag.Usage = fmt.Sprintf("%s (%s)", flag.Usage, envVar)
+	})
+
 	cobra.OnInitialize(initConfig)
 }
-
 func getSurveyorOpts() *surveyor.Options {
 	opts := surveyor.GetDefaultOptions()
 	opts.URLs = viper.GetString("servers")
@@ -266,6 +335,7 @@ func getSurveyorOpts() *surveyor.Options {
 	opts.CertFile = viper.GetString("tlscert")
 	opts.KeyFile = viper.GetString("tlskey")
 	opts.CaFile = viper.GetString("tlscacert")
+	opts.TLSFirst = viper.GetBool("tlsfirst")
 	opts.HTTPCertFile = viper.GetString("http-tlscert")
 	opts.HTTPKeyFile = viper.GetString("http-tlskey")
 	opts.HTTPCaFile = viper.GetString("http-tlscacert")
@@ -275,7 +345,18 @@ func getSurveyorOpts() *surveyor.Options {
 	opts.ObservationConfigDir = viper.GetString("observe")
 	opts.JetStreamConfigDir = viper.GetString("jetstream")
 	opts.Accounts = viper.GetBool("accounts")
+	opts.AccountsDetailed = viper.GetBool("accounts-detailed")
+	opts.Gatewayz = viper.GetBool("gatewayz")
+	opts.Raftz = viper.GetBool("raftz")
+	opts.Jsz = collectJsz
+	opts.JszLimit = viper.GetInt("jsz-limit")
+	opts.JszLeadersOnly = viper.GetBool("jsz-leaders-only")
+	opts.JszFilters = jszFilters
+
+	opts.EnablePprof = viper.GetBool("pprof")
+	opts.SysReqPrefix = viper.GetString("sys-req-prefix")
 	opts.ServerResponseWait = viper.GetDuration("server-discovery-timeout")
+	opts.TokenFile = viper.GetString("token-file")
 
 	logLevel, err := logrus.ParseLevel(viper.GetString("log-level"))
 	if err == nil {

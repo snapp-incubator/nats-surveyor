@@ -24,18 +24,15 @@ func TestJetStream_Load(t *testing.T) {
 
 	opt := GetDefaultOptions()
 	opt.URLs = js.ClientURL()
-	metrics := NewJetStreamAdvisoryMetrics(prometheus.NewRegistry(), nil)
-	reconnectCtr := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: prometheus.BuildFQName("nats", "survey", "nats_reconnects"),
-		Help: "Number of times the surveyor reconnected to the NATS cluster",
-	}, []string{"name"})
-	cp := newSurveyorConnPool(opt, reconnectCtr)
+	registry := prometheus.NewRegistry()
+	metrics := NewJetStreamAdvisoryMetrics(registry, nil)
+	cp := newSurveyorConnPool(opt, registry)
 
 	config, err := NewJetStreamAdvisoryConfigFromFile("testdata/goodjs/global.json")
 	if err != nil {
 		t.Fatalf("advisory config error: %s", err)
 	}
-	adv, err := newJetStreamAdvisoryListener(config, cp, opt.Logger, metrics, &natsContext{})
+	adv, err := newJetStreamAdvisoryListener(config, cp, opt.Logger, metrics)
 	if err != nil {
 		t.Fatalf("advisory listener error: %s", err)
 	}
@@ -59,7 +56,7 @@ func TestJetStream_Load(t *testing.T) {
 	if err != nil {
 		t.Fatalf("observation config error: %s", err)
 	}
-	adv, err = newJetStreamAdvisoryListener(config, cp, opt.Logger, metrics, &natsContext{})
+	adv, err = newJetStreamAdvisoryListener(config, cp, opt.Logger, metrics)
 	if err != nil {
 		t.Fatalf("observation listener error: %s", err)
 	}
@@ -94,18 +91,15 @@ func TestJetStream_Handle(t *testing.T) {
 
 	opt := GetDefaultOptions()
 	opt.URLs = js.ClientURL()
-	metrics := NewJetStreamAdvisoryMetrics(prometheus.NewRegistry(), nil)
-	reconnectCtr := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: prometheus.BuildFQName("nats", "survey", "nats_reconnects"),
-		Help: "Number of times the surveyor reconnected to the NATS cluster",
-	}, []string{"name"})
-	cp := newSurveyorConnPool(opt, reconnectCtr)
+	registry := prometheus.NewRegistry()
+	metrics := NewJetStreamAdvisoryMetrics(registry, nil)
+	cp := newSurveyorConnPool(opt, registry)
 
 	config, err := NewJetStreamAdvisoryConfigFromFile("testdata/goodjs/global.json")
 	if err != nil {
 		t.Fatalf("advisory config error: %s", err)
 	}
-	adv, err := newJetStreamAdvisoryListener(config, cp, opt.Logger, metrics, &natsContext{})
+	adv, err := newJetStreamAdvisoryListener(config, cp, opt.Logger, metrics)
 	if err != nil {
 		t.Fatalf("advisory listener error: %s", err)
 	}
@@ -640,9 +634,6 @@ func TestSurveyor_AdvisoriesError(t *testing.T) {
 	}
 	defer s.Stop()
 	om := s.JetStreamAdvisoryManager()
-	if err != nil {
-		t.Fatalf("Error creating advisories manager: %s", err)
-	}
 
 	// add invalid advisory (missing account name)
 	err = om.Set(
@@ -663,7 +654,6 @@ func TestSurveyor_AdvisoriesError(t *testing.T) {
 			AccountName: "global",
 		},
 	)
-
 	if err != nil {
 		t.Errorf("Expected no error; got: %s", err)
 	}
@@ -925,4 +915,12 @@ func TestSurveyor_AdvisoriesWatcher(t *testing.T) {
 		expectedAdvisories[advPath] = advConfig
 		waitForAdvUpdate(t, am, expectedAdvisories)
 	})
+}
+
+func TestSurveyor_AdvisoriesMetrics(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewJetStreamAdvisoryMetrics(registry, testMetricInfoLabels)
+
+	infos := metrics.MetricInfos()
+	assertMetricInfos(t, infos)
 }

@@ -15,6 +15,7 @@ package surveyor
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -44,163 +45,184 @@ var (
 )
 
 type JSAdvisoryMetrics struct {
-	jsAPIAuditCtr           *prometheus.CounterVec
-	jsDeliveryExceededCtr   *prometheus.CounterVec
-	jsDeliveryTerminatedCtr *prometheus.CounterVec
-	jsAckMetricDelay        *prometheus.HistogramVec
-	jsAckMetricDeliveries   *prometheus.CounterVec
-	jsAdvisoriesGauge       prometheus.Gauge
-	jsUnknownAdvisoryCtr    *prometheus.CounterVec
-	jsTotalAdvisoryCtr      *prometheus.CounterVec
-	jsAdvisoryParseErrorCtr *prometheus.CounterVec
-	jsConsumerActionCtr     *prometheus.CounterVec
-	jsStreamActionCtr       *prometheus.CounterVec
-	jsSnapshotSizeCtr       *prometheus.CounterVec
-	jsSnapthotDuration      *prometheus.HistogramVec
-	jsRestoreCreatedCtr     *prometheus.CounterVec
-	jsRestoreSizeCtr        *prometheus.CounterVec
-	jsRestoreDuration       *prometheus.HistogramVec
-	jsConsumerLeaderElected *prometheus.CounterVec
-	jsConsumerQuorumLost    *prometheus.CounterVec
-	jsStreamLeaderElected   *prometheus.CounterVec
-	jsStreamQuorumLost      *prometheus.CounterVec
-	jsConsumerDeliveryNAK   *prometheus.CounterVec
+	jsAdvisoriesGauge *Gauge
+
+	jsAPIAuditCtr           *CounterVec
+	jsDeliveryExceededCtr   *CounterVec
+	jsDeliveryTerminatedCtr *CounterVec
+	jsAckMetricDelay        *HistogramVec
+	jsAckMetricDeliveries   *CounterVec
+	jsUnknownAdvisoryCtr    *CounterVec
+	jsTotalAdvisoryCtr      *CounterVec
+	jsAdvisoryParseErrorCtr *CounterVec
+	jsConsumerActionCtr     *CounterVec
+	jsStreamActionCtr       *CounterVec
+	jsSnapshotSizeCtr       *CounterVec
+	jsSnapthotDuration      *HistogramVec
+	jsRestoreCreatedCtr     *CounterVec
+	jsRestoreSizeCtr        *CounterVec
+	jsRestoreDuration       *HistogramVec
+	jsConsumerLeaderElected *CounterVec
+	jsConsumerQuorumLost    *CounterVec
+	jsStreamLeaderElected   *CounterVec
+	jsStreamQuorumLost      *CounterVec
+	jsConsumerDeliveryNAK   *CounterVec
 }
 
 func NewJetStreamAdvisoryMetrics(registry *prometheus.Registry, constLabels prometheus.Labels) *JSAdvisoryMetrics {
 	metrics := &JSAdvisoryMetrics{
+		jsAdvisoriesGauge: newGauge(
+			prometheus.BuildFQName("nats", "jetstream", "advisory_count"),
+			"Number of JetStream Advisory listeners that are running",
+			constLabels,
+		),
+
 		// API Audit
-		jsAPIAuditCtr: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "api_audit"),
-			Help:        "JetStream API access audit events",
-			ConstLabels: constLabels,
-		}, []string{"subject", "account"}),
+		jsAPIAuditCtr: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "api_audit"),
+			"JetStream API access audit events",
+			constLabels,
+			[]string{"subject", "account"},
+		),
 
 		// Delivery Exceeded
-		jsDeliveryExceededCtr: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "delivery_exceeded_count"),
-			Help:        "Advisories about JetStream Consumer Delivery Exceeded events",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream", "consumer"}),
+		jsDeliveryExceededCtr: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "delivery_exceeded_count"),
+			"Advisories about JetStream Consumer Delivery Exceeded events",
+			constLabels,
+			[]string{"account", "stream", "consumer"},
+		),
 
-		jsDeliveryTerminatedCtr: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "delivery_terminated_count"),
-			Help:        "Advisories about JetStream Consumer Delivery Terminated events",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream", "consumer"}),
+		jsDeliveryTerminatedCtr: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "delivery_terminated_count"),
+			"Advisories about JetStream Consumer Delivery Terminated events",
+			constLabels,
+			[]string{"account", "stream", "consumer"},
+		),
 
 		// Ack Samples
-		jsAckMetricDelay: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "acknowledgement_duration"),
-			Help:        "How long an Acknowledged message took to be Acknowledged",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream", "consumer"}),
+		jsAckMetricDelay: newHistogramVec(
+			prometheus.BuildFQName("nats", "jetstream", "acknowledgement_duration"),
+			"How long an Acknowledged message took to be Acknowledged",
+			constLabels,
+			[]string{"account", "stream", "consumer"},
+		),
 
-		jsAckMetricDeliveries: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "acknowledgement_deliveries"),
-			Help:        "How many times messages took to be delivered and Acknowledged",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream", "consumer"}),
+		jsAckMetricDeliveries: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "acknowledgement_deliveries"),
+			"How many times messages took to be delivered and Acknowledged",
+			constLabels,
+			[]string{"account", "stream", "consumer"},
+		),
 
 		// Misc
-		jsAdvisoriesGauge: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "advisory_count"),
-			Help:        "Number of JetStream Advisory listeners that are running",
-			ConstLabels: constLabels,
-		}),
+		jsUnknownAdvisoryCtr: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "unknown_advisories"),
+			"Unsupported JetStream Advisory types received",
+			constLabels,
+			[]string{"schema", "account"},
+		),
 
-		jsUnknownAdvisoryCtr: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "unknown_advisories"),
-			Help:        "Unsupported JetStream Advisory types received",
-			ConstLabels: constLabels,
-		}, []string{"schema", "account"}),
+		jsTotalAdvisoryCtr: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "total_advisories"),
+			"Total JetStream Advisories handled",
+			constLabels,
+			[]string{"account"},
+		),
 
-		jsTotalAdvisoryCtr: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "total_advisories"),
-			Help:        "Total JetStream Advisories handled",
-			ConstLabels: constLabels,
-		}, []string{"account"}),
-
-		jsAdvisoryParseErrorCtr: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "advisory_parse_errors"),
-			Help:        "Number of advisories that could not be parsed",
-			ConstLabels: constLabels,
-		}, []string{"account"}),
+		jsAdvisoryParseErrorCtr: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "advisory_parse_errors"),
+			"Number of advisories that could not be parsed",
+			constLabels,
+			[]string{"account"},
+		),
 
 		// Stream and Consumer actions
-		jsConsumerActionCtr: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_actions"),
-			Help:        "Actions performed on consumers",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream", "action"}),
+		jsConsumerActionCtr: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "consumer_actions"),
+			"Actions performed on consumers",
+			constLabels,
+			[]string{"account", "stream", "action"},
+		),
 
-		jsStreamActionCtr: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_actions"),
-			Help:        "Actions performed on streams",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream", "action"}),
+		jsStreamActionCtr: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "stream_actions"),
+			"Actions performed on streams",
+			constLabels,
+			[]string{"account", "stream", "action"},
+		),
 
 		// Snapshot create
-		jsSnapshotSizeCtr: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "snapshot_size_bytes"),
-			Help:        "The size of snapshots being created",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream"}),
+		jsSnapshotSizeCtr: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "snapshot_size_bytes"),
+			"The size of snapshots being created",
+			constLabels,
+			[]string{"account", "stream"},
+		),
 
-		jsSnapthotDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "snapshot_duration"),
-			Help:        "How long a snapshot takes to be processed",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream"}),
+		jsSnapthotDuration: newHistogramVec(
+			prometheus.BuildFQName("nats", "jetstream", "snapshot_duration"),
+			"How long a snapshot takes to be processed",
+			constLabels,
+			[]string{"account", "stream"},
+		),
 
 		// Restore
-		jsRestoreCreatedCtr: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "restore_created_count"),
-			Help:        "How many restore operations were started",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream"}),
+		jsRestoreCreatedCtr: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "restore_created_count"),
+			"How many restore operations were started",
+			constLabels,
+			[]string{"account", "stream"},
+		),
 
-		jsRestoreSizeCtr: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "restore_size_bytes"),
-			Help:        "The size of restores that was completed",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream"}),
+		jsRestoreSizeCtr: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "restore_size_bytes"),
+			"The size of restores that was completed",
+			constLabels,
+			[]string{"account", "stream"},
+		),
 
-		jsRestoreDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "restore_duration"),
-			Help:        "How long a restore took to be processed",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream"}),
+		jsRestoreDuration: newHistogramVec(
+			prometheus.BuildFQName("nats", "jetstream", "restore_duration"),
+			"How long a restore took to be processed",
+			constLabels,
+			[]string{"account", "stream"},
+		),
 
-		jsConsumerLeaderElected: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_leader_elected"),
-			Help:        "How many times leader elections were done for consumers",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream", "consumer"}),
+		jsConsumerLeaderElected: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "consumer_leader_elected"),
+			"How many times leader elections were done for consumers",
+			constLabels,
+			[]string{"account", "stream"},
+		),
 
-		jsConsumerQuorumLost: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_quorum_lost"),
-			Help:        "How many times a consumer lost quorum leading to new leader elections",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream", "consumer"}),
+		jsConsumerQuorumLost: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "consumer_quorum_lost"),
+			"How many times a consumer lost quorum leading to new leader elections",
+			constLabels,
+			[]string{"account", "stream"},
+		),
 
-		jsStreamLeaderElected: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_leader_elected"),
-			Help:        "How many times leader elections were done for streams",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream"}),
+		jsStreamLeaderElected: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "stream_leader_elected"),
+			"How many times leader elections were done for streams",
+			constLabels,
+			[]string{"account", "stream"},
+		),
 
-		jsStreamQuorumLost: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_quorum_lost"),
-			Help:        "How many times a stream lost quorum leading to new leader elections",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream"}),
+		jsStreamQuorumLost: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "stream_quorum_lost"),
+			"How many times a stream lost quorum leading to new leader elections",
+			constLabels,
+			[]string{"account", "stream"},
+		),
 
-		jsConsumerDeliveryNAK: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "jetstream", "consumer_nak"),
-			Help:        "How many times a consumer sent a NAK",
-			ConstLabels: constLabels,
-		}, []string{"account", "stream", "consumer"}),
+		jsConsumerDeliveryNAK: newCounterVec(
+			prometheus.BuildFQName("nats", "jetstream", "consumer_nak"),
+			"How many times a consumer sent a NAK",
+			constLabels,
+			[]string{"account", "stream", "consumer"},
+		),
 	}
 
 	registry.MustRegister(metrics.jsAPIAuditCtr)
@@ -228,16 +250,39 @@ func NewJetStreamAdvisoryMetrics(registry *prometheus.Registry, constLabels prom
 	return metrics
 }
 
+// MetricInfos returns metadata about the metrics used by JSAdvisoryMetrics
+func (m *JSAdvisoryMetrics) MetricInfos() []MetricInfo {
+	return []MetricInfo{
+		m.jsAdvisoriesGauge,
+		m.jsAPIAuditCtr,
+		m.jsDeliveryExceededCtr,
+		m.jsDeliveryTerminatedCtr,
+		m.jsAckMetricDelay,
+		m.jsAckMetricDeliveries,
+		m.jsUnknownAdvisoryCtr,
+		m.jsTotalAdvisoryCtr,
+		m.jsAdvisoryParseErrorCtr,
+		m.jsConsumerActionCtr,
+		m.jsStreamActionCtr,
+		m.jsSnapshotSizeCtr,
+		m.jsSnapthotDuration,
+		m.jsRestoreCreatedCtr,
+		m.jsRestoreSizeCtr,
+		m.jsRestoreDuration,
+		m.jsConsumerLeaderElected,
+		m.jsConsumerQuorumLost,
+		m.jsStreamLeaderElected,
+		m.jsStreamQuorumLost,
+		m.jsConsumerDeliveryNAK,
+	}
+}
+
 type JSAdvisoryConfig struct {
 	// unique identifier
 	ID string `json:"id"`
 
 	// account name
 	AccountName string `json:"name"`
-
-	// optional configuration for importing JS metrics and advisories from other accounts
-	// it can only be set via JSAdvisoryConfig directly (not from config file)
-	ExternalAccountConfig *JSAdvisoriesExternalAccountConfig `json:"-"`
 
 	// connection options
 	JWT         string `json:"jwt"`
@@ -250,6 +295,18 @@ type JSAdvisoryConfig struct {
 	TLSCA       string `json:"tls_ca"`
 	TLSCert     string `json:"tls_cert"`
 	TLSKey      string `json:"tls_key"`
+
+	// additional opts available via JSAdvisoryConfig directly (not from config file)
+
+	// optional configuration for importing JS metrics and advisories from other accounts
+	ExternalAccountConfig *JSAdvisoriesExternalAccountConfig `json:"-"`
+
+	// optional provided interface for obtaining NATS connection
+	ConnProvider ConnProvider `json:"-"`
+	// unique identifier for set of NATS options, to permit reload on change
+	NatsOptsID string `json:"nats_opts_id"`
+	// nats options appended to base surveyor options
+	NatsOpts []nats.Option `json:"-"`
 }
 
 // JSAdvisoriesExternalAccountConfig is used to configure external accounts from which
@@ -276,47 +333,47 @@ func (o *JSAdvisoryConfig) Validate() error {
 		return fmt.Errorf("js advisory config cannot be nil")
 	}
 
-	var errs []string
+	var errs []error
 	if o.ID == "" {
-		errs = append(errs, "id is required")
+		errs = append(errs, fmt.Errorf("id is required"))
 	}
 
 	if o.AccountName == "" {
-		errs = append(errs, "name is required")
+		errs = append(errs, fmt.Errorf("name is required"))
 	}
 
 	if o.ExternalAccountConfig != nil {
 		if o.ExternalAccountConfig.MetricsSubject == "" {
-			errs = append(errs, "external_account_config.metrics_subject is required when importing metrics from external accounts")
+			errs = append(errs, fmt.Errorf("external_account_config.metrics_subject is required when importing metrics from external accounts"))
 		}
 		metricsTokens := strings.Split(o.ExternalAccountConfig.MetricsSubject, ".")
 		switch {
 		case o.ExternalAccountConfig.MetricsAccountTokenPosition <= 0:
-			errs = append(errs, "external_account_config.metrics_account_token_position is required when importing metrics from external accounts")
+			errs = append(errs, fmt.Errorf("external_account_config.metrics_account_token_position is required when importing metrics from external accounts"))
 		case o.ExternalAccountConfig.MetricsAccountTokenPosition > len(metricsTokens):
-			errs = append(errs, "external_account_config.metrics_account_token_position is greater than the number of tokens in external_account_config.metrics_subject")
+			errs = append(errs, fmt.Errorf("external_account_config.metrics_account_token_position is greater than the number of tokens in external_account_config.metrics_subject"))
 		case metricsTokens[o.ExternalAccountConfig.AdvisoryAccountTokenPosition-1] != "*":
-			errs = append(errs, "external_account_config.metrics_subject must have a wildcard token at the position specified by external_account_config.metrics_account_token_position")
+			errs = append(errs, fmt.Errorf("external_account_config.metrics_subject must have a wildcard token at the position specified by external_account_config.metrics_account_token_position"))
 		}
 
 		if o.ExternalAccountConfig.AdvisorySubject == "" {
-			errs = append(errs, "external_account_config.advisory_subject is required when importing advisories from external accounts")
+			errs = append(errs, fmt.Errorf("external_account_config.advisory_subject is required when importing advisories from external accounts"))
 		}
 		advisoryTokens := strings.Split(o.ExternalAccountConfig.AdvisorySubject, ".")
 		switch {
 		case o.ExternalAccountConfig.AdvisoryAccountTokenPosition <= 0:
-			errs = append(errs, "external_account_config.advisory_account_token_position is required when importing advisories from external accounts")
+			errs = append(errs, fmt.Errorf("external_account_config.advisory_account_token_position is required when importing advisories from external accounts"))
 		case o.ExternalAccountConfig.AdvisoryAccountTokenPosition > len(advisoryTokens):
-			errs = append(errs, "external_account_config.advisory_account_token_position is greater than the number of tokens in external_account_config.advisory_subject")
+			errs = append(errs, fmt.Errorf("external_account_config.advisory_account_token_position is greater than the number of tokens in external_account_config.advisory_subject"))
 		case advisoryTokens[o.ExternalAccountConfig.AdvisoryAccountTokenPosition-1] != "*":
-			errs = append(errs, "external_account_config.advisory_subject must have a wildcard token at the position specified by external_account_config.advisory_account_token_position")
+			errs = append(errs, fmt.Errorf("external_account_config.advisory_subject must have a wildcard token at the position specified by external_account_config.advisory_account_token_position"))
 		}
 	}
 	if len(errs) == 0 {
 		return nil
 	}
 
-	return fmt.Errorf("%s", strings.Join(errs, ", "))
+	return errors.Join(errs...)
 }
 
 func (o *JSAdvisoryConfig) copy() *JSAdvisoryConfig {
@@ -352,33 +409,32 @@ func NewJetStreamAdvisoryConfigFromFile(f string) (*JSAdvisoryConfig, error) {
 // jsAdvisoryListener listens for JetStream advisories and expose them as prometheus data
 type jsAdvisoryListener struct {
 	sync.Mutex
-	config            *JSAdvisoryConfig
-	cp                *natsConnPool
-	logger            *logrus.Logger
-	metrics           *JSAdvisoryMetrics
-	pc                *pooledNatsConn
-	subAdvisory       *nats.Subscription
-	subMetric         *nats.Subscription
-	additionalContext *natsContext
+	config      *JSAdvisoryConfig
+	logger      *logrus.Logger
+	metrics     *JSAdvisoryMetrics
+	provider    ConnProvider
+	conn        Conn
+	subAdvisory *nats.Subscription
+	subMetric   *nats.Subscription
+	running     bool
 }
 
-func newJetStreamAdvisoryListener(config *JSAdvisoryConfig, cp *natsConnPool, logger *logrus.Logger, metrics *JSAdvisoryMetrics, additionalContext *natsContext) (*jsAdvisoryListener, error) {
+func newJetStreamAdvisoryListener(config *JSAdvisoryConfig, provider ConnProvider, logger *logrus.Logger, metrics *JSAdvisoryMetrics) (*jsAdvisoryListener, error) {
 	err := config.Validate()
 	if err != nil {
 		return nil, fmt.Errorf("invalid JetStream advisory config for id: %s, account name: %s, error: %v", config.ID, config.AccountName, err)
 	}
 
 	return &jsAdvisoryListener{
-		config:            config,
-		cp:                cp,
-		logger:            logger,
-		metrics:           metrics,
-		additionalContext: additionalContext,
+		config:   config,
+		provider: provider,
+		logger:   logger,
+		metrics:  metrics,
 	}, nil
 }
 
-func (o *jsAdvisoryListener) natsContext() *natsContext {
-	natsCtx := &natsContext{
+func (o *jsAdvisoryListener) natsContext() *NatsContext {
+	natsCtx := &NatsContext{
 		JWT:         o.config.JWT,
 		Seed:        o.config.Seed,
 		Credentials: o.config.Credentials,
@@ -389,6 +445,8 @@ func (o *jsAdvisoryListener) natsContext() *natsContext {
 		TLSCA:       o.config.TLSCA,
 		TLSCert:     o.config.TLSCert,
 		TLSKey:      o.config.TLSKey,
+		NatsOptsID:  o.config.NatsOptsID,
+		NatsOpts:    o.config.NatsOpts,
 	}
 
 	return natsCtx
@@ -398,21 +456,24 @@ func (o *jsAdvisoryListener) natsContext() *natsContext {
 func (o *jsAdvisoryListener) Start() error {
 	o.Lock()
 	defer o.Unlock()
-	if o.pc != nil {
-		// already started
-		return nil
+	if o.running {
+		if o.conn != nil && o.conn.IsConnected() {
+			// already started
+			return nil
+		}
+		o.Unlock()
+		o.Stop()
+		o.Lock()
 	}
-	natsCtx := o.natsContext()
-	if o.additionalContext.Username != "" {
-		natsCtx.Username = o.additionalContext.Username
-	}
-	if o.additionalContext.Password != "" {
-		natsCtx.Password = o.additionalContext.Password
-	}
-	pc, err := o.cp.Get(natsCtx)
+
+	var err error
+	o.conn, err = o.provider.Get(o.natsContext())
 	if err != nil {
 		return fmt.Errorf("nats connection failed for id: %s, account name: %s, error: %v", o.config.ID, o.config.AccountName, err)
 	}
+
+	o.running = true
+
 	metricsSubject := api.JSMetricPrefix + ".>"
 	advisorySubject := api.JSAdvisoryPrefix + ".>"
 	if o.config.ExternalAccountConfig != nil {
@@ -420,20 +481,19 @@ func (o *jsAdvisoryListener) Start() error {
 		advisorySubject = o.config.ExternalAccountConfig.AdvisorySubject
 	}
 
-	subAdvisory, err := pc.nc.Subscribe(metricsSubject, o.advisoryHandler)
+	subAdvisory, err := o.conn.Conn().Subscribe(metricsSubject, o.advisoryHandler)
 	if err != nil {
-		pc.ReturnToPool()
+		o.conn.Close()
 		return fmt.Errorf("could not subscribe to JetStream advisory for id: %s, account name: %s, topic: %s, error: %v", o.config.ID, o.config.AccountName, api.JSAdvisoryPrefix, err)
 	}
 
-	subMetric, err := pc.nc.Subscribe(advisorySubject, o.advisoryHandler)
+	subMetric, err := o.conn.Conn().Subscribe(advisorySubject, o.advisoryHandler)
 	if err != nil {
 		_ = subAdvisory.Unsubscribe()
-		pc.ReturnToPool()
+		o.conn.Close()
 		return fmt.Errorf("could not subscribe to JetStream advisory for id: %s, account name: %s, topic: %s, error: %v", o.config.ID, o.config.AccountName, api.JSMetricPrefix, err)
 	}
 
-	o.pc = pc
 	o.subAdvisory = subAdvisory
 	o.subMetric = subMetric
 	o.logger.Infof("started JetStream advisory for id: %s, account name: %s, advisory topic: %s, metric topic: %s", o.config.ID, o.config.AccountName, api.JSAdvisoryPrefix, api.JSMetricPrefix)
@@ -482,9 +542,10 @@ func (o *jsAdvisoryListener) advisoryHandler(m *nats.Msg) {
 	var err error
 	if o.config.ExternalAccountConfig != nil {
 		var tokenPosition int
-		if m.Sub.Subject == o.config.ExternalAccountConfig.MetricsSubject {
+		switch m.Sub.Subject {
+		case o.config.ExternalAccountConfig.MetricsSubject:
 			tokenPosition = o.config.ExternalAccountConfig.MetricsAccountTokenPosition
-		} else if m.Sub.Subject == o.config.ExternalAccountConfig.AdvisorySubject {
+		case o.config.ExternalAccountConfig.AdvisorySubject:
 			tokenPosition = o.config.ExternalAccountConfig.AdvisoryAccountTokenPosition
 		}
 		if tokenPosition == 0 {
@@ -540,10 +601,10 @@ func (o *jsAdvisoryListener) advisoryHandler(m *nats.Msg) {
 		o.metrics.jsSnapthotDuration.WithLabelValues(accountName, event.Stream).Observe(event.End.Sub(event.Start).Seconds())
 
 	case *advisory.JSConsumerLeaderElectedV1:
-		o.metrics.jsConsumerLeaderElected.WithLabelValues(accountName, event.Stream, event.Consumer).Inc()
+		o.metrics.jsConsumerLeaderElected.WithLabelValues(accountName, event.Stream).Inc()
 
 	case *advisory.JSConsumerQuorumLostV1:
-		o.metrics.jsConsumerQuorumLost.WithLabelValues(accountName, event.Stream, event.Consumer).Inc()
+		o.metrics.jsConsumerQuorumLost.WithLabelValues(accountName, event.Stream).Inc()
 
 	case *advisory.JSStreamLeaderElectedV1:
 		o.metrics.jsStreamLeaderElected.WithLabelValues(accountName, event.Stream).Inc()
@@ -564,7 +625,8 @@ func (o *jsAdvisoryListener) advisoryHandler(m *nats.Msg) {
 func (o *jsAdvisoryListener) Stop() {
 	o.Lock()
 	defer o.Unlock()
-	if o.pc == nil {
+
+	if !o.running {
 		// already stopped
 		return
 	}
@@ -580,31 +642,30 @@ func (o *jsAdvisoryListener) Stop() {
 	}
 
 	o.metrics.jsAdvisoriesGauge.Dec()
-	o.pc.ReturnToPool()
-	o.pc = nil
+	o.conn.Close()
+	o.conn = nil
+	o.running = false
 }
 
 // JSAdvisoryManager exposes methods to operate on JetStream advisories
 type JSAdvisoryManager struct {
 	sync.Mutex
-	cp                *natsConnPool
-	listenerMap       map[string]*jsAdvisoryListener
-	logger            *logrus.Logger
-	metrics           *JSAdvisoryMetrics
-	additionalContext *natsContext
+	provider    ConnProvider
+	listenerMap map[string]*jsAdvisoryListener
+	logger      *logrus.Logger
+	metrics     *JSAdvisoryMetrics
 }
 
-// newJetStreamAdvisoryManager creates a JSAdvisoryManager for managing JetStream advisories
-func newJetStreamAdvisoryManager(cp *natsConnPool, logger *logrus.Logger, metrics *JSAdvisoryMetrics, additionalContext *natsContext) *JSAdvisoryManager {
+// NewJetStreamAdvisoryManager creates a JSAdvisoryManager for managing JetStream advisories
+func NewJetStreamAdvisoryManager(provider ConnProvider, logger *logrus.Logger, metrics *JSAdvisoryMetrics) *JSAdvisoryManager {
 	return &JSAdvisoryManager{
-		cp:                cp,
-		logger:            logger,
-		metrics:           metrics,
-		additionalContext: additionalContext,
+		provider: provider,
+		logger:   logger,
+		metrics:  metrics,
 	}
 }
 
-func (am *JSAdvisoryManager) start() {
+func (am *JSAdvisoryManager) Start() {
 	am.Lock()
 	defer am.Unlock()
 	if am.listenerMap != nil {
@@ -622,7 +683,7 @@ func (am *JSAdvisoryManager) IsRunning() bool {
 	return am.listenerMap != nil
 }
 
-func (am *JSAdvisoryManager) stop() {
+func (am *JSAdvisoryManager) Stop() {
 	am.Lock()
 	defer am.Unlock()
 	if am.listenerMap == nil {
@@ -679,7 +740,13 @@ func (am *JSAdvisoryManager) Set(config *JSAdvisoryConfig) error {
 	if found && reflect.DeepEqual(config, existingAdv.config) {
 		return nil
 	}
-	adv, err := newJetStreamAdvisoryListener(config, am.cp, am.logger, am.metrics, am.additionalContext)
+
+	provider := am.provider
+	if config.ConnProvider != nil {
+		provider = config.ConnProvider
+	}
+
+	adv, err := newJetStreamAdvisoryListener(config, provider, am.logger, am.metrics)
 	if err != nil {
 		return fmt.Errorf("could not set advisory for id: %s, account name: %s, error: %v", config.ID, config.AccountName, err)
 	}

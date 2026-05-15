@@ -21,9 +21,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/nats-io/nats.go"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -31,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
@@ -44,8 +45,10 @@ var (
 	DefaultListenAddress      = "0.0.0.0"
 	DefaultURL                = nats.DefaultURL
 	DefaultExpectedServers    = 1
+	DefaultJszLimit           = 1024
 	DefaultPollTimeout        = time.Second * 3
 	DefaultServerResponseWait = 500 * time.Millisecond
+	DefaultSysReqPrefix       = "$SYS.REQ"
 
 	// bcryptPrefix from nats-server
 	bcryptPrefix = "$2a$"
@@ -63,6 +66,7 @@ type Options struct {
 	NATSPassword         string
 	NATSAuthUser         string
 	NATSAuthPassword     string
+	TokenFile            string
 	PollTimeout          time.Duration
 	ExpectedServers      int
 	ServerResponseWait   time.Duration
@@ -71,6 +75,7 @@ type Options struct {
 	CertFile             string
 	KeyFile              string
 	CaFile               string
+	TLSFirst             bool
 	HTTPCertFile         string
 	HTTPKeyFile          string
 	HTTPCaFile           string
@@ -80,10 +85,20 @@ type Options struct {
 	ObservationConfigDir string
 	JetStreamConfigDir   string
 	Accounts             bool
+	AccountsDetailed     bool
+	Gatewayz             bool
+	Raftz                bool
+	Jsz                  CollectJsz
+	JszLimit             int
+	JszLeadersOnly       bool
+	JszFilters           []JszFilter
+	SysReqPrefix         string
 	Logger               *logrus.Logger    // not exposed by CLI
+	Provider             ConnProvider      // not exposed by CLI
 	NATSOpts             []nats.Option     // not exposed by CLI
 	ConstLabels          prometheus.Labels // not exposed by CLI
-	DisableHTTPServer    bool              // not exposed by CLI
+	EnablePprof          bool
+	DisableHTTPServer    bool // not exposed by CLI
 }
 
 // GetDefaultOptions returns the default set of options
@@ -109,19 +124,20 @@ func GetDefaultOptions() *Options {
 // A Surveyor instance
 type Surveyor struct {
 	sync.Mutex
-	cp                   *natsConnPool
-	httpServer           *http.Server
-	jsAdvisoryManager    *JSAdvisoryManager
-	jsAdvisoryFSWatcher  *jsAdvisoryFSWatcher
-	jsConfigListListener *jsConfigListListener
-	listener             net.Listener
-	logger               *logrus.Logger
-	opts                 Options
-	promRegistry         *prometheus.Registry
-	statzC               *StatzCollector
-	serviceObsManager    *ServiceObsManager
-	serviceObsFSWatcher  *serviceObsFSWatcher
-	sysAcctPC            *pooledNatsConn
+	httpServer          *http.Server
+	jsAdvisoryManager   *JSAdvisoryManager
+	jsAdvisoryFSWatcher *jsAdvisoryFSWatcher
+	listener            net.Listener
+	logger              *logrus.Logger
+	opts                Options
+	promRegistry        *prometheus.Registry
+	statzC              *StatzCollector
+	serviceObsManager   *ServiceObsManager
+	serviceObsFSWatcher *serviceObsFSWatcher
+	connProvider        ConnProvider
+	conn                Conn
+	openConnections     []Conn
+	running             bool
 }
 
 // NewSurveyor creates a surveyor
@@ -131,37 +147,40 @@ func NewSurveyor(opts *Options) (*Surveyor, error) {
 	}
 
 	promRegistry := prometheus.NewRegistry()
-	reconnectCtr := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        prometheus.BuildFQName("nats", "survey", "nats_reconnects"),
-		Help:        "Number of times the surveyor reconnected to the NATS cluster",
-		ConstLabels: opts.ConstLabels,
-	}, []string{"name"})
-	promRegistry.MustRegister(reconnectCtr)
-	cp := newSurveyorConnPool(opts, reconnectCtr)
+
+	if opts.Provider == nil {
+		opts.Provider = newSurveyorConnPool(opts, promRegistry)
+	}
+
 	serviceObsMetrics := NewServiceObservationMetrics(promRegistry, opts.ConstLabels)
-	serviceObsManager := newServiceObservationManager(cp, opts.Logger, serviceObsMetrics)
+	serviceObsManager := NewServiceObservationManager(opts.Provider, opts.Logger, serviceObsMetrics)
 	serviceFsWatcher := newServiceObservationFSWatcher(opts.Logger, serviceObsManager)
 	jsAdvisoryMetrics := NewJetStreamAdvisoryMetrics(promRegistry, opts.ConstLabels)
-	jsAdvisoryManager := newJetStreamAdvisoryManager(cp, opts.Logger, jsAdvisoryMetrics, &natsContext{Username: opts.NATSAuthUser, Password: opts.NATSAuthPassword})
+	jsAdvisoryManager := NewJetStreamAdvisoryManager(opts.Provider, opts.Logger, jsAdvisoryMetrics)
 	jsFsWatcher := newJetStreamAdvisoryFSWatcher(opts.Logger, jsAdvisoryManager)
 
-	jsConfigListMetrics := NewJetStreamConfigListMetrics(promRegistry, opts.ConstLabels)
-	jsConfigListener := NewJetStreamConfigListener(cp, opts.Logger, jsConfigListMetrics)
-
 	return &Surveyor{
-		cp:                   cp,
-		jsAdvisoryManager:    jsAdvisoryManager,
-		jsAdvisoryFSWatcher:  jsFsWatcher,
-		logger:               opts.Logger,
-		opts:                 *opts,
-		promRegistry:         promRegistry,
-		serviceObsManager:    serviceObsManager,
-		serviceObsFSWatcher:  serviceFsWatcher,
-		jsConfigListListener: jsConfigListener,
+		connProvider:        opts.Provider,
+		openConnections:     make([]Conn, 0),
+		jsAdvisoryManager:   jsAdvisoryManager,
+		jsAdvisoryFSWatcher: jsFsWatcher,
+		logger:              opts.Logger,
+		opts:                *opts,
+		promRegistry:        promRegistry,
+		serviceObsManager:   serviceObsManager,
+		serviceObsFSWatcher: serviceFsWatcher,
 	}, nil
 }
 
-func newSurveyorConnPool(opts *Options, reconnectCtr *prometheus.CounterVec) *natsConnPool {
+func (s *Surveyor) MetricInfos() []MetricInfo {
+	infos := make([]MetricInfo, 0)
+	infos = append(infos, s.statzC.MetricInfos()...)
+	infos = append(infos, s.serviceObsManager.metrics.MetricInfos()...)
+	infos = append(infos, s.jsAdvisoryManager.metrics.MetricInfos()...)
+	return infos
+}
+
+func newSurveyorConnPool(opts *Options, registry *prometheus.Registry) *natsConnPool {
 	natsDefaults := &natsContextDefaults{
 		Name:    opts.Name,
 		URL:     opts.URLs,
@@ -169,15 +188,23 @@ func newSurveyorConnPool(opts *Options, reconnectCtr *prometheus.CounterVec) *na
 		TLSKey:  opts.KeyFile,
 		TLSCA:   opts.CaFile,
 	}
-	natsOpts := append(opts.NATSOpts,
+
+	reconnectCtr := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name:        prometheus.BuildFQName("nats", "survey", "nats_reconnects"),
+		Help:        "Number of times the surveyor reconnected to the NATS cluster",
+		ConstLabels: opts.ConstLabels,
+	}, []string{"name"})
+	registry.MustRegister(reconnectCtr)
+
+	natsOpts := append([]nats.Option{},
+		nats.ReconnectHandler(func(c *nats.Conn) {
+			reconnectCtr.WithLabelValues(c.Opts.Name).Inc()
+			opts.Logger.Infof("%q reconnected to %v", c.Opts.Name, c.ConnectedAddr())
+		}),
 		nats.DisconnectErrHandler(func(c *nats.Conn, err error) {
 			if err != nil {
 				opts.Logger.Warnf("%q disconnected, will possibly miss replies: %v", c.Opts.Name, err)
 			}
-		}),
-		nats.ReconnectHandler(func(c *nats.Conn) {
-			reconnectCtr.WithLabelValues(c.Opts.Name).Inc()
-			opts.Logger.Infof("%q reconnected to %v", c.Opts.Name, c.ConnectedAddr())
 		}),
 		nats.ClosedHandler(func(c *nats.Conn) {
 			opts.Logger.Infof("%q connection closing", c.Opts.Name)
@@ -189,22 +216,51 @@ func newSurveyorConnPool(opts *Options, reconnectCtr *prometheus.CounterVec) *na
 				opts.Logger.Warnf("Error: name=%q err=%v", c.Opts.Name, err)
 			}
 		}),
+		//TODO: this should be -1, right?
 		nats.MaxReconnects(10240),
 	)
+
+	if opts.TLSFirst {
+		natsOpts = append(natsOpts, nats.TLSHandshakeFirst())
+	}
+
+	natsOpts = append(natsOpts, opts.NATSOpts...)
+
 	return newNatsConnPool(opts.Logger, natsDefaults, natsOpts)
 }
 
-func (s *Surveyor) createStatszCollector() {
+func (s *Surveyor) createStatszCollector() error {
 	if s.opts.ExpectedServers == 0 {
-		return
+		return nil
+	}
+
+	if s.opts.AccountsDetailed {
+		s.opts.Accounts = true
 	}
 
 	if !s.opts.Accounts {
 		s.logger.Debugln("Skipping per-account exports")
 	}
 
-	s.statzC = NewStatzCollector(s.sysAcctPC.nc, s.logger, s.opts.ExpectedServers, s.opts.ServerResponseWait, s.opts.PollTimeout, s.opts.Accounts, s.opts.ConstLabels)
-	s.promRegistry.MustRegister(s.statzC)
+	s.statzC = NewStatzCollector(
+		s.conn.Conn(),
+		s.logger,
+		s.opts.ExpectedServers,
+		s.opts.ServerResponseWait,
+		s.opts.PollTimeout,
+		s.opts.Accounts,
+		s.opts.AccountsDetailed,
+		s.opts.Gatewayz,
+		s.opts.Raftz,
+		s.opts.Jsz,
+		s.opts.JszLimit,
+		s.opts.JszLeadersOnly,
+		s.opts.JszFilters,
+		s.opts.SysReqPrefix,
+		s.opts.ConstLabels,
+	)
+
+	return s.promRegistry.Register(s.statzC)
 }
 
 // generates the TLS config for https
@@ -336,6 +392,15 @@ func (s *Surveyor) startHTTP() error {
 	mux.HandleFunc("/healthz", func(resp http.ResponseWriter, req *http.Request) {
 		resp.Write([]byte("ok"))
 	})
+	if s.opts.EnablePprof {
+		// copy of Init() from 	"net/http/pprof"
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		s.logger.Infof("Unauthenticated pprof endpoint enabled at /debug/pprof/")
+	}
 
 	httpServer := &http.Server{
 		Addr:           hp,
@@ -360,7 +425,7 @@ func (s *Surveyor) startJetStreamAdvisories() {
 		return
 	}
 
-	s.jsAdvisoryManager.start()
+	s.jsAdvisoryManager.Start()
 	dir := s.opts.JetStreamConfigDir
 	if dir == "" {
 		s.logger.Debugln("skipping JetStream advisory startup, no directory configured")
@@ -389,24 +454,12 @@ func (s *Surveyor) startJetStreamAdvisories() {
 	}
 }
 
-func (s *Surveyor) startJetStreamConfigList() {
-	natsCtx := &natsContext{
-		Username: s.opts.NATSAuthUser,
-		Password: s.opts.NATSAuthPassword,
-	}
-	err := s.jsConfigListListener.Start(natsCtx)
-	if err != nil {
-		s.logger.Errorf("failed to start config list listener. error: %s", err.Error())
-		return
-	}
-}
-
 func (s *Surveyor) startServiceObservations() {
 	if s.serviceObsManager.IsRunning() {
 		return
 	}
 
-	s.serviceObsManager.start()
+	s.serviceObsManager.Start()
 	dir := s.opts.ObservationConfigDir
 	if dir == "" {
 		s.logger.Debugln("skipping service observation startup, no directory configured")
@@ -447,32 +500,44 @@ func (s *Surveyor) JetStreamAdvisoryManager() *JSAdvisoryManager {
 func (s *Surveyor) Start() error {
 	s.Lock()
 	defer s.Unlock()
-	if s.sysAcctPC != nil {
-		// already running
-		return nil
+
+	if s.running {
+		if s.conn != nil && s.conn.IsConnected() {
+			// already running
+			return nil
+		}
+
+		s.Unlock()
+		s.Stop()
+		s.Lock()
 	}
 
 	var err error
-	natsCtx := &natsContext{
+	natsCtx := &NatsContext{
 		Credentials: s.opts.Credentials,
 		Nkey:        s.opts.Nkey,
 		JWT:         s.opts.JWT,
 		Seed:        s.opts.Seed,
 		Username:    s.opts.NATSUser,
 		Password:    s.opts.NATSPassword,
+		TokenFile:   s.opts.TokenFile,
 	}
 
-	s.sysAcctPC, err = s.cp.Get(natsCtx)
+	s.conn, err = s.connProvider.Get(natsCtx)
 	if err != nil {
 		return err
 	}
 
+	s.running = true
+
 	if s.statzC == nil {
-		s.createStatszCollector()
+		if err := s.createStatszCollector(); err != nil {
+			return err
+		}
 	}
+
 	s.startServiceObservations()
 	s.startJetStreamAdvisories()
-	s.startJetStreamConfigList()
 
 	if !s.opts.DisableHTTPServer && s.listener == nil && s.httpServer == nil {
 		if err := s.startHTTP(); err != nil {
@@ -487,7 +552,8 @@ func (s *Surveyor) Start() error {
 func (s *Surveyor) Stop() {
 	s.Lock()
 	defer s.Unlock()
-	if s.sysAcctPC == nil {
+
+	if !s.running {
 		// already stopped
 		return
 	}
@@ -510,13 +576,13 @@ func (s *Surveyor) Stop() {
 	}
 
 	s.serviceObsFSWatcher.stop()
-	s.serviceObsManager.stop()
+	s.serviceObsManager.Stop()
 
 	s.jsAdvisoryFSWatcher.stop()
-	s.jsAdvisoryManager.stop()
+	s.jsAdvisoryManager.Stop()
 
-	s.sysAcctPC.ReturnToPool()
-	s.sysAcctPC = nil
+	s.connProvider.Close(true)
+	s.running = false
 }
 
 // Gather implements the prometheus.Gatherer interface

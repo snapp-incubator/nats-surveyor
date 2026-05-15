@@ -19,37 +19,48 @@ Usage:
   nats-surveyor [flags]
 
 Flags:
-      --accounts                            Export per account metrics
-  -a, --addr string                         Network host to listen on. (default "0.0.0.0")
+  -s, --servers string                      NATS Cluster url(s) (NATS_SURVEYOR_SERVERS) (default "nats://127.0.0.1:4222")
+  -c, --count int                           Expected number of servers (-1 for undefined). (NATS_SURVEYOR_COUNT) (default 1)
+      --timeout duration                    Polling timeout (NATS_SURVEYOR_TIMEOUT) (default 3s)
+      --server-discovery-timeout duration   Maximum wait time between responses from servers during server discovery.
+                                            Use in conjunction with -count=-1. (NATS_SURVEYOR_SERVER_DISCOVERY_TIMEOUT) (default 500ms)
+      --creds string                        Credentials File (NATS_SURVEYOR_CREDS)
+      --nkey string                         Nkey Seed File (NATS_SURVEYOR_NKEY)
+      --jwt string                          User JWT. Use in conjunction with --seed (NATS_SURVEYOR_JWT)
+      --seed string                         Private key (nkey seed). Use in conjunction with --jwt (NATS_SURVEYOR_SEED)
+      --user string                         NATS user name or token (NATS_SURVEYOR_USER)
+      --password string                     NATS user password (NATS_SURVEYOR_PASSWORD)
+      --token-file string                   Path to a file with a bearer token (NATS_SURVEYOR_TOKEN_FILE)
+      --tlscert string                      Client certificate file for NATS connections. (NATS_SURVEYOR_TLSCERT)
+      --tlskey string                       Client private key for NATS connections. (NATS_SURVEYOR_TLSKEY)
+      --tlscacert string                    Client certificate CA on NATS connections. (NATS_SURVEYOR_TLSCACERT)
+      --tlsfirst                            Whether to use TLS First connections. (NATS_SURVEYOR_TLSFIRST)
+  -p, --port int                            Port to listen on. (NATS_SURVEYOR_PORT) (default 7777)
+  -a, --addr string                         Network host to listen on. (NATS_SURVEYOR_ADDR) (default "0.0.0.0")
+      --http-tlscert string                 Server certificate file (Enables HTTPS). (NATS_SURVEYOR_HTTP_TLSCERT)
+      --http-tlskey string                  Private key for server certificate (used with HTTPS). (NATS_SURVEYOR_HTTP_TLSKEY)
+      --http-tlscacert string               Client certificate CA for verification (used with HTTPS). (NATS_SURVEYOR_HTTP_TLSCACERT)
+      --http-user string                    Enable basic auth and set user name for HTTP scrapes. (NATS_SURVEYOR_HTTP_USER)
+      --http-pass string                    Set the password for HTTP scrapes. NATS bcrypt supported. (NATS_SURVEYOR_HTTP_PASS)
+      --prefix string                       Replace the default prefix for all the metrics. (NATS_SURVEYOR_PREFIX)
+      --observe string                      Listen for observation statistics based on config files in a directory. (NATS_SURVEYOR_OBSERVE)
+      --jetstream string                    Listen for JetStream Advisories based on config files in a directory. (NATS_SURVEYOR_JETSTREAM)
+      --accounts                            Export per-account metrics (NATS_SURVEYOR_ACCOUNTS)
+      --accounts-detailed                   Export granular per-account bytes and message metrics (NATS_SURVEYOR_ACCOUNTS_DETAILED)
+      --gatewayz                            Export gateway metrics (NATS_SURVEYOR_GATEWAYZ)
+      --raftz                               Export metalayer Raft group metrics from raftz endpoint (NATS_SURVEYOR_RAFTZ)
+      --jsz string                          Export jsz metrics optionally, one of: all|streams|consumers (NATS_SURVEYOR_JSZ)
+      --jsz-limit int                       Limit the number of returned account jsz metrics (NATS_SURVEYOR_JSZ_LIMIT) (default 1024)
+      --jsz-leaders-only                    Fetch jsz metrics from stream and consumer leaders only (NATS_SURVEYOR_JSZ_LEADERS_ONLY)
+      --jsz-filter jsz-filter               Fetch selected jsz metrics only(comma separated list). Metrics: stream_total_messages,stream_total_bytes,stream_first_seq,stream_last_seq,stream_consumer_count,stream_subject_count,consumer_delivered_consumer_seq,consumer_delivered_stream_seq,consumer_ack_floor_consumer_seq,consumer_ack_floor_stream_seq,consumer_num_ack_pending,consumer_num_pending,consumer_num_redelivered,consumer_num_waiting (NATS_SURVEYOR_JSZ_FILTER) (default [])
+      --sys-req-prefix string               Subject prefix for system requests ($SYS.REQ) (NATS_SURVEYOR_SYS_REQ_PREFIX) (default "$SYS.REQ")
+      --log-level string                    Log level, one of: trace|debug|info|warn|error|fatal|panic (NATS_SURVEYOR_LOG_LEVEL) (default "info")
       --config string                       config file (default is ./nats-surveyor.yaml)
-  -c, --count int                           Expected number of servers (-1 for undefined). (default 1)
-      --creds string                        Credentials File
   -h, --help                                help for nats-surveyor
-      --http-pass string                    Set the password for HTTP scrapes. NATS bcrypt supported.
-      --http-tlscacert string               Client certificate CA for verification (used with HTTPS).
-      --http-tlscert string                 Server certificate file (Enables HTTPS).
-      --http-tlskey string                  Private key for server certificate (used with HTTPS).
-      --http-user string                    Enable basic auth and set user name for HTTP scrapes.
-      --jetstream string                    Listen for JetStream Advisories based on config files in a directory.
-      --jwt string                          User JWT. Use in conjunction with --seed
-      --log-level string                    Log level, one of: trace|debug|info|warn|error|fatal|panic (default "info")
-      --nkey string                         Nkey Seed File
-      --observe string                      Listen for observation statistics based on config files in a directory.
-      --password string                     NATS user password
-  -p, --port int                            Port to listen on. (default 7777)
-      --prefix string                       Replace the default prefix for all the metrics.
-      --seed string                         Private key (nkey seed). Use in conjunction with --jwt
-      --server-discovery-timeout duration   Maximum wait time between responses from servers during server discovery. Use in conjunction with -count=-1. (default 500ms)
-  -s, --servers string                      NATS Cluster url(s) (default "nats://127.0.0.1:4222")
-      --timeout duration                    Polling timeout (default 3s)
-      --tlscacert string                    Client certificate CA on NATS connections.
-      --tlscert string                      Client certificate file for NATS connections.
-      --tlskey string                       Client private key for NATS connections.
-      --user string                         NATS user name or token
   -v, --version                             version for nats-surveyor
 ```
 
-At this time, NATS 2.0 System credentials are required for meaningful usage. Those can be provided in 2 ways:
+System account credentials can be provided in 4 ways:
 
 - using `--creds` option to supply chained credentials file (containing JWT and NKey seed):
 
@@ -69,11 +80,21 @@ At this time, NATS 2.0 System credentials are required for meaningful usage. Tho
 2019/10/14 21:35:40 Prometheus exporter listening at http://0.0.0.0:7777/metrics
 ```
 
+- using `--token-file` flag to point to a file containing the token:
+
+```sh
+./nats-surveyor --user sys --token-file /var/run/secrets/tokens/<token>
+  2025/08/29 22:14:20 Connected to NATS Deployment: 127.0.0.1:4222
+  2025/08/29 22:14:20 Prometheus exporter listening at http://0.0.0.0:7777/metrics
+```
+
+- using `--user` and `--password` flags
+
 ## Config
 
 ### Config Files
 
-Surveyor uses Viper to read configs, so it will support all file types that Viper supports (JSON, TOML, YAML, HCL, envfile, and Java properties)
+Surveyor uses [Viper](https://github.com/spf13/viper) to read configs, so it will support all file types that Viper supports (JSON, TOML, YAML, HCL, envfile, and Java properties)
 
 To use a config file pass the `--config` flag. The defaults are `/etc/nats-surveyor/nats-surveyor[.ext]` and `./nats-surveyor[.ext]` with one of the supported extensions.
 
@@ -89,12 +110,14 @@ log-level: debug
 
 Environment variables are also taken into account. Any environment variable that is prefixed with `NATS_SURVEYOR_` will be read.
 
-Each flag has a matching environment variable, flag names should be converted to uppercase and dashes replaced with underscores.  Example: 
+Each flag has a matching environment variable, flag names should be converted to uppercase and dashes replaced with underscores.  Example:
 
 ```
 NATS_SURVEYOR_SERVERS=nats://127.0.0.1:4222
 NATS_SURVEYOR_ACCOUNTS=true
 NATS_SURVEYOR_LOG_LEVEL=debug
+NATS_SURVEYOR_USER=myuser
+NATS_SURVEYOR_PASSWORD=mypassword
 ```
 
 ## Metrics
@@ -111,15 +134,66 @@ and no additional NATS metrics when there is no connectivity to the NATS system.
 allows users to differentiate between a problem with the exporter itself connectivity with
 the NATS system.
 
+## JSZ Metrics
+
+Since v0.9.1, nats-surveyor supports collecting stream and consumer metrics. By default, surveyor will collect all the metrics
+from all the replicas from streams and consumers which depending of the size of your deployment, can result in high cardinality
+issues in the Prometheus setup.  To narrow down the list of metrics to be exported there are a few options.
+
+- Using `--jsz=streams` to make sure that only the streams metrics is collected (if consumer metrics are not needed).
+
+- Using `--jsz-leaders-only` to skip data from the stream and consumer replicas.
+
+- Using `--jsz-filter` to decrease number of consumer metrics:
+
+  The following list of metrics for consumers is available to be used as filters:
+
+  ```
+  consumer_delivered_consumer_seq
+  consumer_delivered_stream_seq
+  consumer_ack_floor_consumer_seq
+  consumer_ack_floor_stream_seq
+  consumer_num_ack_pending
+  consumer_num_pending
+  consumer_num_redelivered
+  consumer_num_waiting
+  ```
+
+For example, the following will make surveyor only collect the metrics from the leaders
+and picking up `num_pending`, `num_ack_pending` and `num_waiting` from the consumers.
+  
+```
+  nats-surveyor --jsz=all \
+                --jsz-leaders-only \
+                --jsz-filter=consumer_num_pending,consumer_num_ack_pending,consumer_num_waiting
+```
+
 ## Docker Compose
 
 An easy way to start the NATS Surveyor stack (Grafana, Prometheus, and NATS
-Surveyor) is through docker-compose.
+Surveyor) is through docker compose.
 
 Follow these links for installation instructions:
 
-* [Docker Installation](https://docs.docker.com/v17.09/engine/installation/)
-* [Docker Compose Installation](https://docs.docker.com/compose/install/)
+- [Docker Installation](https://docs.docker.com/engine/install/)
+- [Docker Compose Installation](https://docs.docker.com/compose/install/)
+
+The included `docker-compose` setup supports authentication using either creds file
+or username/password:
+
+**Using credential file:**
+
+`NATS_SURVEYOR_CREDS=/path/to/SYS.creds NATS_SURVEYOR_SERVERS=nats://host.docker.internal:4222 docker compose up --pull always`
+
+**Using username/password:**
+
+`NATS_SURVEYOR_USER=system NATS_SURVEYOR_PASSWORD=s3cret NATS_SURVEYOR_SERVERS=nats://host.docker.internal:4222 docker compose up --pull always`
+
+**Using the survey.sh helper script:**
+
+```bash
+./survey.sh nats://host.docker.internal:4222 1 ./SYS.creds
+```
 
 ### Environment Variables
 
@@ -154,10 +228,10 @@ but it's recommended you provide a list for backup servers to connect to, e.g.
 
 You can start the Surveyor stack two ways.  The first is through docker
 compose.  Ensure the environment varibles are set, that you are working
-from the /docker-compose directory and run `docker-compose up`.
+from the /docker-compose directory and run `docker compose up --pull always`.
 
 ```bash
-$ docker-compose up
+$ docker compose up --pull always
 Recreating nats-surveyor ... done
 Recreating prometheus    ... done
 Recreating grafana       ... done
@@ -181,30 +255,30 @@ If things aren't working, look in the output for any lines that contain
 `exited with code 1` and address the problem. They are usually docker
 volume mount problems or connectivity problems.
 
-Next, with your browser, navigate to `http://127.0.0.1:3000`, or if you are
+Next, with your browser, navigate to <http://127.0.0.1:3000>, or if you are
 running the Surveyor stack remotely, the hostname of the host running the
 NATS surveyor stack, e.g. `http://yourremotehost:3000`.
 
 The first time you connect, you'll need to login:
 
-* User:  *admin*
-* Password: *admin*
+- User:  *admin*
+- Password: *admin*
 
 After logging in, navigate to "Manage dashboards" and you'll see a dashboard
-available named **NATS Surveyor**, where you'll be able to monitor your
+available named [**NATS Surveyor**](http://localhost:3000/dashboards?query=NATS%20Surveyor), where you'll be able to monitor your
 entire NATS deployment.
 
 ### Stopping (while keeping the containers)
 
-To stop the surveyor stack, but keep the containers run: `docker-compose stop`
+To stop the surveyor stack, but keep the containers run: `docker compose stop`
 
 ### Restarting Surveyor
 
-To restart the surveyor stack after being stopped, run: `docker-compose up`
+To restart the surveyor stack after being stopped, run: `docker compose up`
 
 ### Stopping and removing containers
 
-To cleanup your installation, run: `docker-compose down`
+To cleanup your installation, run: `docker compose down`
 
 ### Running Surveyor as a service
 
@@ -243,10 +317,13 @@ security thread to the node it is running on.
 
 More information can be found [here](https://github.com/prometheus/prometheus/issues/5976).
 
+Alternatively, on Linux you may need to manually set write permissions for the
+bind-mounted prometheus data directory(`storage`).
+
 ## Service Observations
 
 Services can be observed by creating JSON files in the `observations` directory.
-The file extension must be `.json`. 
+The file extension must be `.json`.
 Only one authentication method needs to be provided.
 Example file format:
 
@@ -267,17 +344,18 @@ Example file format:
 }
 ```
 
-Files are watched and updated using [fsnotify](https://github.com/fsnotify/fsnotify) 
+Files are watched and updated using [fsnotify](https://github.com/fsnotify/fsnotify)
 
 ## JetStream
 
 JetStream can be monitored on a per-account basis by creating JSON files in the `jetstream` directory.
 The file extension must be `.json`.
 Only one authentication method needs to be provided.
-e sure that you give access to the `$JS.EVENT.>` subject to your user.
+Be sure that you give access to the `$JS.EVENT.>` subject to your user.
 Example file format:
 
 ### Credentials
+
 ```json
 {
   "name":       "my account",
@@ -296,11 +374,24 @@ Example file format:
 
 Files are watched and updated using [fsnotify](https://github.com/fsnotify/fsnotify)
 
+## Development
+
+The easiest way to test your changes is to build local image:
+
+```
+docker build -t natsio/nats-surveyor:latest --debug .
+```
+
+You can then use the image against local cluster from docker-compse:
+
+```
+NATS_SURVEYOR_USER=system NATS_SURVEYOR_PASSWORD=s3cret NATS_SURVEYOR_SERVERS=nats://host.docker.internal:4222 docker compose up
+```
+
 ## TODO
 
 - [ ] Windows builds
 - [ ] Other events (connections, disconnects, etc)
-- [ ] Best Guess Server Count
 
 [License-Url]: https://www.apache.org/licenses/LICENSE-2.0
 [License-Image]: https://img.shields.io/badge/License-Apache2-blue.svg

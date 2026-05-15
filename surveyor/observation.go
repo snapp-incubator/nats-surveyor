@@ -35,72 +35,81 @@ import (
 )
 
 type ServiceObsMetrics struct {
-	observationsGauge           prometheus.Gauge
-	observationsReceived        *prometheus.CounterVec
-	serviceRequestStatus        *prometheus.CounterVec
-	invalidObservationsReceived *prometheus.CounterVec
-	serviceLatency              *prometheus.HistogramVec
-	totalLatency                *prometheus.HistogramVec
-	requestorRTT                *prometheus.HistogramVec
-	responderRTT                *prometheus.HistogramVec
-	systemRTT                   *prometheus.HistogramVec
+	observationsGauge *Gauge
+
+	observationsReceived        *CounterVec
+	serviceRequestStatus        *CounterVec
+	invalidObservationsReceived *CounterVec
+	serviceLatency              *HistogramVec
+	totalLatency                *HistogramVec
+	requestorRTT                *HistogramVec
+	responderRTT                *HistogramVec
+	systemRTT                   *HistogramVec
 }
 
 func NewServiceObservationMetrics(registry *prometheus.Registry, constLabels prometheus.Labels) *ServiceObsMetrics {
 	metrics := &ServiceObsMetrics{
-		observationsGauge: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name:        prometheus.BuildFQName("nats", "latency", "observations_count"),
-			Help:        "Number of Service Latency listeners that are running",
-			ConstLabels: constLabels,
-		}),
+		observationsGauge: newGauge(
+			prometheus.BuildFQName("nats", "latency", "observations_count"),
+			"Number of Service Latency listeners that are running",
+			constLabels,
+		),
 
-		observationsReceived: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "latency", "observations_received_count"),
-			Help:        "Number of observations received by this surveyor across all services",
-			ConstLabels: constLabels,
-		}, []string{"service", "app", "account"}),
+		observationsReceived: newCounterVec(
+			prometheus.BuildFQName("nats", "latency", "observations_received_count"),
+			"Number of observations received by this surveyor across all services",
+			constLabels,
+			[]string{"service", "app", "account"},
+		),
 
-		serviceRequestStatus: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "latency", "observation_status_count"),
-			Help:        "The status result codes for requests to a service",
-			ConstLabels: constLabels,
-		}, []string{"service", "status", "account"}),
+		serviceRequestStatus: newCounterVec(
+			prometheus.BuildFQName("nats", "latency", "observation_status_count"),
+			"The status result codes for requests to a service",
+			constLabels,
+			[]string{"service", "status", "account"},
+		),
 
-		invalidObservationsReceived: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name:        prometheus.BuildFQName("nats", "latency", "observation_error_count"),
-			Help:        "Number of observations received by this surveyor across all services that could not be handled",
-			ConstLabels: constLabels,
-		}, []string{"service", "account"}),
+		invalidObservationsReceived: newCounterVec(
+			prometheus.BuildFQName("nats", "latency", "observation_error_count"),
+			"Number of observations received by this surveyor across all services that could not be handled",
+			constLabels,
+			[]string{"service", "account"},
+		),
 
-		serviceLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:        prometheus.BuildFQName("nats", "latency", "service_duration"),
-			Help:        "Time spent serving the request in the service",
-			ConstLabels: constLabels,
-		}, []string{"service", "app", "account"}),
+		serviceLatency: newHistogramVec(
+			prometheus.BuildFQName("nats", "latency", "service_duration"),
+			"Time spent serving the request in the service",
+			constLabels,
+			[]string{"service", "app", "account"},
+		),
 
-		totalLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:        prometheus.BuildFQName("nats", "latency", "total_duration"),
-			Help:        "Total time spent serving a service including network overheads",
-			ConstLabels: constLabels,
-		}, []string{"service", "app", "account"}),
+		totalLatency: newHistogramVec(
+			prometheus.BuildFQName("nats", "latency", "total_duration"),
+			"Total time spent serving a service including network overheads",
+			constLabels,
+			[]string{"service", "app", "account"},
+		),
 
-		requestorRTT: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:        prometheus.BuildFQName("nats", "latency", "requestor_rtt"),
-			Help:        "The RTT to the client making a request",
-			ConstLabels: constLabels,
-		}, []string{"service", "app", "account"}),
+		requestorRTT: newHistogramVec(
+			prometheus.BuildFQName("nats", "latency", "requestor_rtt"),
+			"The RTT to the client making a request",
+			constLabels,
+			[]string{"service", "app", "account"},
+		),
 
-		responderRTT: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:        prometheus.BuildFQName("nats", "latency", "responder_rtt"),
-			Help:        "The RTT to the service serving the request",
-			ConstLabels: constLabels,
-		}, []string{"service", "app", "account"}),
+		responderRTT: newHistogramVec(
+			prometheus.BuildFQName("nats", "latency", "responder_rtt"),
+			"The RTT to the service serving the request",
+			constLabels,
+			[]string{"service", "app", "account"},
+		),
 
-		systemRTT: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:        prometheus.BuildFQName("nats", "latency", "system_rtt"),
-			Help:        "The RTT within the NATS system - time traveling clusters, gateways and leaf nodes",
-			ConstLabels: constLabels,
-		}, []string{"service", "app", "account"}),
+		systemRTT: newHistogramVec(
+			prometheus.BuildFQName("nats", "latency", "system_rtt"),
+			"The RTT within the NATS system - time traveling clusters, gateways and leaf nodes",
+			constLabels,
+			[]string{"service", "app", "account"},
+		),
 	}
 
 	registry.MustRegister(metrics.invalidObservationsReceived)
@@ -116,6 +125,21 @@ func NewServiceObservationMetrics(registry *prometheus.Registry, constLabels pro
 	return metrics
 }
 
+// MetricInfos returns metadata about the metrics used by ServiceObsMetrics
+func (s *ServiceObsMetrics) MetricInfos() []MetricInfo {
+	return []MetricInfo{
+		s.observationsGauge,
+		s.observationsReceived,
+		s.serviceRequestStatus,
+		s.invalidObservationsReceived,
+		s.serviceLatency,
+		s.totalLatency,
+		s.requestorRTT,
+		s.responderRTT,
+		s.systemRTT,
+	}
+}
+
 // ServiceObsConfig is used to configure service observations
 type ServiceObsConfig struct {
 	// unique identifier
@@ -124,10 +148,6 @@ type ServiceObsConfig struct {
 	// service settings
 	ServiceName string `json:"name"`
 	Topic       string `json:"topic"`
-
-	// optional configuration for importing observations from other accounts
-	// it can only be set via ServiceObsConfig directly (not from config file)
-	ExternalAccountConfig *ServiceObservationExternalAccountConfig `json:"-"`
 
 	// connection options
 	JWT         string `json:"jwt"`
@@ -140,6 +160,18 @@ type ServiceObsConfig struct {
 	TLSCA       string `json:"tls_ca"`
 	TLSCert     string `json:"tls_cert"`
 	TLSKey      string `json:"tls_key"`
+
+	// additional opts available via ServiceObsConfig directly (not from config file)
+
+	// optional configuration for importing observations from other accounts
+	ExternalAccountConfig *ServiceObservationExternalAccountConfig `json:"-"`
+
+	// optional provided interface for obtaining NATS connection
+	ConnProvider ConnProvider `json:"-"`
+	// unique identifier for set of NATS options, to permit reload on change
+	NatsOptsID string `json:"nats_opts_id"`
+	// nats options appended to base surveyor options
+	NatsOpts []nats.Option `json:"-"`
 }
 
 type ServiceObservationExternalAccountConfig struct {
@@ -228,30 +260,31 @@ func NewServiceObservationConfigFromFile(f string) (*ServiceObsConfig, error) {
 // serviceObsListener listens for observations from nats service latency checks
 type serviceObsListener struct {
 	sync.Mutex
-	config  *ServiceObsConfig
-	cp      *natsConnPool
-	logger  *logrus.Logger
-	metrics *ServiceObsMetrics
-	pc      *pooledNatsConn
-	sub     *nats.Subscription
+	config   *ServiceObsConfig
+	provider ConnProvider
+	logger   *logrus.Logger
+	metrics  *ServiceObsMetrics
+	conn     Conn
+	sub      *nats.Subscription
+	running  bool
 }
 
-func newServiceObservationListener(config *ServiceObsConfig, cp *natsConnPool, logger *logrus.Logger, metrics *ServiceObsMetrics) (*serviceObsListener, error) {
+func newServiceObservationListener(config *ServiceObsConfig, provider ConnProvider, logger *logrus.Logger, metrics *ServiceObsMetrics) (*serviceObsListener, error) {
 	err := config.Validate()
 	if err != nil {
 		return nil, fmt.Errorf("invalid service observation config for id: %s, service name: %s, error: %v", config.ID, config.ServiceName, err)
 	}
 
 	return &serviceObsListener{
-		config:  config,
-		cp:      cp,
-		logger:  logger,
-		metrics: metrics,
+		config:   config,
+		provider: provider,
+		logger:   logger,
+		metrics:  metrics,
 	}, nil
 }
 
-func (o *serviceObsListener) natsContext() *natsContext {
-	natsCtx := &natsContext{
+func (o *serviceObsListener) natsContext() *NatsContext {
+	natsCtx := &NatsContext{
 		JWT:         o.config.JWT,
 		Seed:        o.config.Seed,
 		Credentials: o.config.Credentials,
@@ -262,6 +295,8 @@ func (o *serviceObsListener) natsContext() *natsContext {
 		TLSCA:       o.config.TLSCA,
 		TLSCert:     o.config.TLSCert,
 		TLSKey:      o.config.TLSKey,
+		NatsOptsID:  o.config.NatsOptsID,
+		NatsOpts:    o.config.NatsOpts,
 	}
 
 	// legacy Credentials field
@@ -276,23 +311,31 @@ func (o *serviceObsListener) natsContext() *natsContext {
 func (o *serviceObsListener) Start() error {
 	o.Lock()
 	defer o.Unlock()
-	if o.pc != nil {
-		// already started
-		return nil
+
+	if o.running {
+		if o.conn != nil && o.conn.IsConnected() {
+			// already started
+			return nil
+		}
+		o.Unlock()
+		o.Stop()
+		o.Lock()
 	}
 
-	pc, err := o.cp.Get(o.natsContext())
+	var err error
+	o.conn, err = o.provider.Get(o.natsContext())
 	if err != nil {
 		return fmt.Errorf("nats connection failed for id: %s, service name: %s, error: %v", o.config.ID, o.config.ServiceName, err)
 	}
 
-	sub, err := pc.nc.Subscribe(o.config.Topic, o.observationHandler)
+	o.running = true
+
+	sub, err := o.conn.Conn().Subscribe(o.config.Topic, o.observationHandler)
 	if err != nil {
-		pc.ReturnToPool()
+		o.conn.Close()
 		return fmt.Errorf("could not subscribe to service observation topic for id: %s, service name: %s, topic: %s, error: %v", o.config.ID, o.config.ServiceName, o.config.Topic, err)
 	}
 
-	o.pc = pc
 	o.sub = sub
 	o.metrics.observationsGauge.Inc()
 	o.logger.Infof("started service observation for id: %s, service name: %s, topic: %s", o.config.ID, o.config.ServiceName, o.config.Topic)
@@ -364,7 +407,7 @@ func getTokenFromSubject(subject string, token int) (string, error) {
 func (o *serviceObsListener) Stop() {
 	o.Lock()
 	defer o.Unlock()
-	if o.pc == nil {
+	if !o.running {
 		// already stopped
 		return
 	}
@@ -375,29 +418,30 @@ func (o *serviceObsListener) Stop() {
 	}
 
 	o.metrics.observationsGauge.Dec()
-	o.pc.ReturnToPool()
-	o.pc = nil
+	o.conn.Close()
+	o.conn = nil
+	o.running = false
 }
 
 // ServiceObsManager exposes methods to operate on service observations
 type ServiceObsManager struct {
 	sync.Mutex
-	cp          *natsConnPool
+	provider    ConnProvider
 	listenerMap map[string]*serviceObsListener
 	logger      *logrus.Logger
 	metrics     *ServiceObsMetrics
 }
 
-// newServiceObservationManager creates a ServiceObsManager for managing Service Observations
-func newServiceObservationManager(cp *natsConnPool, logger *logrus.Logger, metrics *ServiceObsMetrics) *ServiceObsManager {
+// NewServiceObservationManager creates a ServiceObsManager for managing Service Observations
+func NewServiceObservationManager(provider ConnProvider, logger *logrus.Logger, metrics *ServiceObsMetrics) *ServiceObsManager {
 	return &ServiceObsManager{
-		cp:      cp,
-		logger:  logger,
-		metrics: metrics,
+		provider: provider,
+		logger:   logger,
+		metrics:  metrics,
 	}
 }
 
-func (om *ServiceObsManager) start() {
+func (om *ServiceObsManager) Start() {
 	om.Lock()
 	defer om.Unlock()
 	if om.listenerMap != nil {
@@ -415,7 +459,7 @@ func (om *ServiceObsManager) IsRunning() bool {
 	return om.listenerMap != nil
 }
 
-func (om *ServiceObsManager) stop() {
+func (om *ServiceObsManager) Stop() {
 	om.Lock()
 	defer om.Unlock()
 	if om.listenerMap == nil {
@@ -473,7 +517,12 @@ func (om *ServiceObsManager) Set(config *ServiceObsConfig) error {
 		return nil
 	}
 
-	obs, err := newServiceObservationListener(config, om.cp, om.logger, om.metrics)
+	provider := om.provider
+	if config.ConnProvider != nil {
+		provider = config.ConnProvider
+	}
+
+	obs, err := newServiceObservationListener(config, provider, om.logger, om.metrics)
 	if err != nil {
 		return fmt.Errorf("could not set observation for id: %s, service name: %s, error: %v", config.ID, config.ServiceName, err)
 	}

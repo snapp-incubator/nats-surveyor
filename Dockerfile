@@ -1,4 +1,4 @@
-FROM golang:1.23-alpine3.20 AS build
+FROM golang:1.26-alpine3.23 AS build
 
 WORKDIR /go/src/nats-surveyor
 
@@ -11,10 +11,10 @@ ENV GO111MODULE=on
 ENV CGO_ENABLED=0
 RUN go build
 
-FROM alpine:latest as osdeps
+FROM alpine:latest AS osdeps
 RUN apk add --no-cache ca-certificates
 
-FROM alpine:3.18
+FROM alpine:3.23
 COPY --from=build /go/src/nats-surveyor/nats-surveyor /nats-surveyor
 COPY --from=osdeps /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
