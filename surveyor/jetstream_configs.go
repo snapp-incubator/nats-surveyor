@@ -228,23 +228,23 @@ func NewJetStreamConfigListMetrics(registry *prometheus.Registry, constLabels pr
 	return metrics
 }
 
-// jsAdvisoryListener listens for JetStream advisories and expose them as prometheus data
+// jsConfigListListener polls JetStream stream/consumer configuration and state on an
+// interval and exposes the result as prometheus metrics.
 type jsConfigListListener struct {
 	sync.Mutex
 	cancelLoop context.CancelFunc
-	cp         *natsConnPool
+	provider   ConnProvider
 	logger     *logrus.Logger
 	metrics    *JSStreamConfigMetrics
-	pc         *pooledNatsConn
+	conn       Conn
 	js         nats.JetStreamContext
 }
 
-func NewJetStreamConfigListener(cp *natsConnPool, logger *logrus.Logger, metrics *JSStreamConfigMetrics) *jsConfigListListener {
-
+func NewJetStreamConfigListener(provider ConnProvider, logger *logrus.Logger, metrics *JSStreamConfigMetrics) *jsConfigListListener {
 	return &jsConfigListListener{
-		cp:      cp,
-		logger:  logger,
-		metrics: metrics,
+		provider: provider,
+		logger:   logger,
+		metrics:  metrics,
 	}
 }
 
@@ -270,21 +270,23 @@ func (o *jsConfigListListener) gatherData(ctx context.Context, interval time.Dur
 	}
 }
 
-func (o *jsConfigListListener) Start(natsCtx *natsContext) error {
+func (o *jsConfigListListener) Start(natsCtx *NatsContext) error {
 	o.Lock()
 	defer o.Unlock()
-	if o.pc != nil {
+	if o.conn != nil {
 		// already started
 		return nil
 	}
-	pc, err := o.cp.Get(natsCtx)
+	conn, err := o.provider.Get(natsCtx)
 	if err != nil {
 		return fmt.Errorf("nats connection failed. error: %v", err)
 	}
-	o.pc = pc
-	js, err := pc.nc.JetStream()
+	o.conn = conn
+	js, err := conn.Conn().JetStream()
 	if err != nil {
-		return fmt.Errorf("failed to create jetstream connection")
+		o.conn.Close()
+		o.conn = nil
+		return fmt.Errorf("failed to create jetstream connection: %v", err)
 	}
 	o.js = js
 	ctx, cancelFunc := context.WithCancel(context.Background())
@@ -589,15 +591,15 @@ func IsPullBased(info *nats.ConsumerInfo) string {
 	return "false"
 }
 
-// Stop stops listening for JetStream advisories
+// Stop stops the JetStream config polling loop.
 func (o *jsConfigListListener) Stop() {
 	o.Lock()
 	defer o.Unlock()
-	if o.pc == nil {
+	if o.conn == nil {
 		// already stopped
 		return
 	}
 	o.cancelLoop()
-	o.pc.ReturnToPool()
-	o.pc = nil
+	o.conn.Close()
+	o.conn = nil
 }
