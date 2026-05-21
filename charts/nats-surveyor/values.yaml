@@ -32,3 +32,8 @@ prometheus:
   serviceMonitor:
     enabled: true
     interval: 10s
+
+# Extra command-line flags appended to nats-surveyor's args.
+# Useful for opting into optional scrapes like --raftz or --expvarz
+# without bumping the chart for every new flag.
+extraArgs: []

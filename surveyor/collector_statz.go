@@ -96,6 +96,19 @@ type statzDescs struct {
 	RaftzMetaApplied   *GaugeVec
 	RaftzMetaPindex    *GaugeVec
 
+	// Go runtime memstats via expvarz — used to distinguish process RSS growth that
+	// is Go-managed (heap alloc/sys) from growth outside Go's accounting (cgo, mmap,
+	// runtime overhead). Compare nats_core_mem_bytes vs ExpvarzMemstatsSys over time.
+	ExpvarzMemstatsAlloc        *GaugeVec
+	ExpvarzMemstatsSys          *GaugeVec
+	ExpvarzMemstatsHeapAlloc    *GaugeVec
+	ExpvarzMemstatsHeapSys      *GaugeVec
+	ExpvarzMemstatsHeapInuse    *GaugeVec
+	ExpvarzMemstatsHeapIdle     *GaugeVec
+	ExpvarzMemstatsHeapReleased *GaugeVec
+	ExpvarzMemstatsMallocs      *CounterVec
+	ExpvarzMemstatsFrees        *CounterVec
+
 	// Jetstream Info
 	JetstreamInfo *GaugeVec
 	// Jetstream Server
@@ -231,6 +244,7 @@ type StatzCollector struct {
 	accStats                []*accountStats
 	gatewayStatz            []*gatewayStatz
 	raftStats               []*raftStat
+	expvarStats             []*expvarStat
 	rtts                    map[string]time.Duration
 	pollTimeout             time.Duration
 	reply                   string
@@ -245,6 +259,7 @@ type StatzCollector struct {
 	collectAccountsDetailed bool
 	collectGatewayz         bool
 	collectRaftz            bool
+	collectExpvarz          bool
 	collectJsz              CollectJsz
 	jszLimit                int
 	jszLeadersOnly          bool
@@ -447,6 +462,28 @@ func (sc *StatzCollector) buildDescs() {
 			sc.constLabels,
 			sc.jsServerLabels,
 		)
+	}
+
+	// Expvarz (Go runtime memstats)
+	if sc.collectExpvarz {
+		sc.descs.ExpvarzMemstatsAlloc = newGaugeVec(newName("expvarz_memstats_alloc_bytes"),
+			"Bytes of allocated heap objects (Go runtime MemStats.Alloc)", sc.constLabels, sc.serverLabels)
+		sc.descs.ExpvarzMemstatsSys = newGaugeVec(newName("expvarz_memstats_sys_bytes"),
+			"Total bytes of memory obtained from the OS (Go runtime MemStats.Sys)", sc.constLabels, sc.serverLabels)
+		sc.descs.ExpvarzMemstatsHeapAlloc = newGaugeVec(newName("expvarz_memstats_heap_alloc_bytes"),
+			"Bytes of allocated heap objects (Go runtime MemStats.HeapAlloc)", sc.constLabels, sc.serverLabels)
+		sc.descs.ExpvarzMemstatsHeapSys = newGaugeVec(newName("expvarz_memstats_heap_sys_bytes"),
+			"Bytes of heap memory obtained from the OS (Go runtime MemStats.HeapSys)", sc.constLabels, sc.serverLabels)
+		sc.descs.ExpvarzMemstatsHeapInuse = newGaugeVec(newName("expvarz_memstats_heap_inuse_bytes"),
+			"Bytes in in-use spans (Go runtime MemStats.HeapInuse)", sc.constLabels, sc.serverLabels)
+		sc.descs.ExpvarzMemstatsHeapIdle = newGaugeVec(newName("expvarz_memstats_heap_idle_bytes"),
+			"Bytes in idle (unused) spans (Go runtime MemStats.HeapIdle)", sc.constLabels, sc.serverLabels)
+		sc.descs.ExpvarzMemstatsHeapReleased = newGaugeVec(newName("expvarz_memstats_heap_released_bytes"),
+			"Bytes of physical memory returned to the OS (Go runtime MemStats.HeapReleased)", sc.constLabels, sc.serverLabels)
+		sc.descs.ExpvarzMemstatsMallocs = newCounterVec(newName("expvarz_memstats_mallocs_total"),
+			"Cumulative count of heap objects allocated (Go runtime MemStats.Mallocs)", sc.constLabels, sc.serverLabels)
+		sc.descs.ExpvarzMemstatsFrees = newCounterVec(newName("expvarz_memstats_frees_total"),
+			"Cumulative count of heap objects freed (Go runtime MemStats.Frees)", sc.constLabels, sc.serverLabels)
 	}
 
 	// Jetstream Info
@@ -759,6 +796,13 @@ func WithCollectRaftz(collectRaftz bool) StatzCollectorOpt {
 	}
 }
 
+func WithCollectExpvarz(collectExpvarz bool) StatzCollectorOpt {
+	return func(sc *StatzCollector) error {
+		sc.collectExpvarz = collectExpvarz
+		return nil
+	}
+}
+
 func WithCollectJsz(jsz CollectJsz, jszLeadersOnly bool, jszFilters []JszFilter) StatzCollectorOpt {
 	return func(sc *StatzCollector) error {
 		sc.collectJsz = jsz
@@ -899,7 +943,7 @@ func WithStats(batch WithStatsBatch) StatzCollectorOpt {
 // Deprecated: NewStatzCollector is deprecated. Use NewStatzCollectorOpts instead.
 func NewStatzCollector(nc *nats.Conn, logger *logrus.Logger, numServers int,
 	serverDiscoveryWait, pollTimeout time.Duration, accounts, accountsDetailed bool, gatewayz bool,
-	raftz bool, jsz CollectJsz, jszLimit int, jszLeadersOnly bool, jszFilters []JszFilter, sysReqPrefix string,
+	raftz bool, expvarz bool, jsz CollectJsz, jszLimit int, jszLeadersOnly bool, jszFilters []JszFilter, sysReqPrefix string,
 	constLabels prometheus.Labels,
 ) *StatzCollector {
 	sc, _ := NewStatzCollectorOpts(
@@ -911,6 +955,7 @@ func NewStatzCollector(nc *nats.Conn, logger *logrus.Logger, numServers int,
 		WithCollectAccounts(accounts, accountsDetailed),
 		WithCollectGatewayz(gatewayz),
 		WithCollectRaftz(raftz),
+		WithCollectExpvarz(expvarz),
 		WithCollectJsz(jsz, jszLeadersOnly, jszFilters),
 		WithJszLimit(jszLimit),
 		WithConstantLabels(constLabels),
@@ -1154,6 +1199,13 @@ func (sc *StatzCollector) poll(ctx context.Context) error {
 		}
 	}
 
+	if sc.collectExpvarz {
+		err := sc.pollExpvarz(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
 	_, collectJsz := shouldCollectJsz(sc.collectJsz)
 	if sc.collectAccounts || collectJsz {
 		return sc.pollAccountInfo(ctx)
@@ -1237,6 +1289,21 @@ func (sc *StatzCollector) pollRaftz(ctx context.Context) error {
 
 	return nil
 
+}
+
+func (sc *StatzCollector) pollExpvarz(ctx context.Context) error {
+	defer trace.StartRegion(ctx, "collectExpvarz").End()
+
+	expvarStats, err := sc.getExpvarz(ctx, sc.nc)
+	if err != nil {
+		return err
+	}
+
+	sc.Lock()
+	sc.expvarStats = expvarStats
+	sc.Unlock()
+
+	return nil
 }
 
 func (sc *StatzCollector) getJSInfos(ctx context.Context, nc *nats.Conn) (map[string]*server.AccountDetail, []*jsStat) {
@@ -1330,6 +1397,31 @@ type gatewayStatz struct {
 type raftStat struct {
 	server.ServerAPIResponse
 	Data *server.RaftzStatus `json:"data,omitempty"`
+}
+
+// expvarMemstats mirrors the subset of runtime.MemStats fields we emit as metrics.
+// The server's expvarz response embeds the full Go runtime MemStats JSON, but we
+// only keep the load-bearing fields to bound cardinality.
+type expvarMemstats struct {
+	Alloc        uint64 `json:"Alloc"`
+	Sys          uint64 `json:"Sys"`
+	HeapAlloc    uint64 `json:"HeapAlloc"`
+	HeapSys      uint64 `json:"HeapSys"`
+	HeapInuse    uint64 `json:"HeapInuse"`
+	HeapIdle     uint64 `json:"HeapIdle"`
+	HeapReleased uint64 `json:"HeapReleased"`
+	Mallocs      uint64 `json:"Mallocs"`
+	Frees        uint64 `json:"Frees"`
+}
+
+type expvarzData struct {
+	Memstats expvarMemstats `json:"memstats"`
+	// Cmdline is intentionally ignored; nothing useful for metrics.
+}
+
+type expvarStat struct {
+	server.ServerAPIResponse
+	Data *expvarzData `json:"data,omitempty"`
 }
 
 type jsStat struct {
@@ -1438,6 +1530,40 @@ func (sc *StatzCollector) getGatewayz(ctx context.Context, nc *nats.Conn) ([]*ga
 		}
 
 		res = append(res, &g)
+		if sc.numServers != -1 && len(res) == sc.numServers {
+			break
+		}
+	}
+
+	return res, nil
+}
+
+func (sc *StatzCollector) getExpvarz(ctx context.Context, nc *nats.Conn) ([]*expvarStat, error) {
+	// EXPVARZ takes no request options today; an empty JSON body matches the
+	// server's expectation (ExpvarzEventOptions embeds only EventFilterOptions).
+	reqJSON := []byte("{}")
+	res := make([]*expvarStat, 0)
+	subj := sc.sysReqPrefix + ".SERVER.PING.EXPVARZ"
+
+	msgs, err := requestMany(ctx, nc, sc, subj, reqJSON, true)
+	if err != nil {
+		sc.logger.Warnf("Error requesting expvarz stats: %s", err.Error())
+	}
+
+	for _, msg := range msgs {
+		var e expvarStat
+
+		if err = unmarshalMsg(msg, &e); err != nil {
+			sc.logger.Warnf("Error deserializing expvarz stats: %s", err.Error())
+			continue
+		}
+
+		if e.Error != nil {
+			sc.logger.Warnf("Error in Expvarz stats response: %s", e.Error.Error())
+			continue
+		}
+
+		res = append(res, &e)
 		if sc.numServers != -1 && len(res) == sc.numServers {
 			break
 		}
@@ -1599,6 +1725,21 @@ func (sc *StatzCollector) MetricInfos() []MetricInfo {
 			sc.descs.RaftzMetaCommitted,
 			sc.descs.RaftzMetaApplied,
 			sc.descs.RaftzMetaPindex,
+		)
+	}
+
+	// Expvarz
+	if sc.collectExpvarz {
+		metrics = append(metrics,
+			sc.descs.ExpvarzMemstatsAlloc,
+			sc.descs.ExpvarzMemstatsSys,
+			sc.descs.ExpvarzMemstatsHeapAlloc,
+			sc.descs.ExpvarzMemstatsHeapSys,
+			sc.descs.ExpvarzMemstatsHeapInuse,
+			sc.descs.ExpvarzMemstatsHeapIdle,
+			sc.descs.ExpvarzMemstatsHeapReleased,
+			sc.descs.ExpvarzMemstatsMallocs,
+			sc.descs.ExpvarzMemstatsFrees,
 		)
 	}
 
@@ -2151,6 +2292,26 @@ func (sc *StatzCollector) Collect(ch chan<- prometheus.Metric) {
 						metrics.newGaugeMetric(sc.descs.RaftzMetaApplied, float64(meta.Applied), labels)
 						metrics.newGaugeMetric(sc.descs.RaftzMetaPindex, float64(meta.PIndex), labels)
 					}
+				}
+			}
+
+			// Expvarz metrics (Go runtime memstats)
+			if sc.collectExpvarz {
+				for _, e := range sc.expvarStats {
+					if e == nil || e.Data == nil {
+						continue
+					}
+					labels := sc.serverLabelValues(e.Server)
+					ms := e.Data.Memstats
+					metrics.newGaugeMetric(sc.descs.ExpvarzMemstatsAlloc, float64(ms.Alloc), labels)
+					metrics.newGaugeMetric(sc.descs.ExpvarzMemstatsSys, float64(ms.Sys), labels)
+					metrics.newGaugeMetric(sc.descs.ExpvarzMemstatsHeapAlloc, float64(ms.HeapAlloc), labels)
+					metrics.newGaugeMetric(sc.descs.ExpvarzMemstatsHeapSys, float64(ms.HeapSys), labels)
+					metrics.newGaugeMetric(sc.descs.ExpvarzMemstatsHeapInuse, float64(ms.HeapInuse), labels)
+					metrics.newGaugeMetric(sc.descs.ExpvarzMemstatsHeapIdle, float64(ms.HeapIdle), labels)
+					metrics.newGaugeMetric(sc.descs.ExpvarzMemstatsHeapReleased, float64(ms.HeapReleased), labels)
+					metrics.newCounterMetric(sc.descs.ExpvarzMemstatsMallocs, float64(ms.Mallocs), labels)
+					metrics.newCounterMetric(sc.descs.ExpvarzMemstatsFrees, float64(ms.Frees), labels)
 				}
 			}
 

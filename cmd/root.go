@@ -270,6 +270,10 @@ func init() {
 	rootCmd.Flags().Bool("raftz", false, "Export metalayer Raft group metrics from raftz endpoint")
 	_ = viper.BindPFlag("raftz", rootCmd.Flags().Lookup("raftz"))
 
+	// expvarz
+	rootCmd.Flags().Bool("expvarz", false, "Export Go runtime memstats from expvarz endpoint (alloc/sys/heap*/mallocs/frees per server)")
+	_ = viper.BindPFlag("expvarz", rootCmd.Flags().Lookup("expvarz"))
+
 	// jsz streams
 	rootCmd.Flags().Var(
 		enumflag.New(&collectJsz, "jsz", surveyor.CollectJszIds, enumflag.EnumCaseInsensitive),
@@ -348,6 +352,7 @@ func getSurveyorOpts() *surveyor.Options {
 	opts.AccountsDetailed = viper.GetBool("accounts-detailed")
 	opts.Gatewayz = viper.GetBool("gatewayz")
 	opts.Raftz = viper.GetBool("raftz")
+	opts.Expvarz = viper.GetBool("expvarz")
 	opts.Jsz = collectJsz
 	opts.JszLimit = viper.GetInt("jsz-limit")
 	opts.JszLeadersOnly = viper.GetBool("jsz-leaders-only")
