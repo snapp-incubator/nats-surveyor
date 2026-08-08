@@ -39,10 +39,17 @@ var (
 	consumerReplicationLagLabels = []string{"stream_name", "consumer_name", "peer_name"}
 	DefaultScrapeInterval        = 10 * time.Second
 	streamLabel                  = []string{"stream_name"}
+	streamSubjectLabels          = []string{"stream_name", "subject"}
 	consumerStreamLabel          = []string{"consumer_name", "stream_name"}
 
 	//DefaultListenerID     = "default_listener"
 )
+
+// DefaultSubjectsMaxPerStream bounds per-subject collection. A stream whose
+// subject space is a wildcard has an unbounded subject count, and every subject
+// becomes its own Prometheus series, so streams above this are skipped rather
+// than partially reported.
+const DefaultSubjectsMaxPerStream = 100
 
 type JSStreamConfigMetrics struct {
 	jsStreamConfig           *prometheus.GaugeVec
@@ -52,6 +59,10 @@ type JSStreamConfigMetrics struct {
 	jsStreamStateConsumerNum *prometheus.GaugeVec
 	jsStreamStateDeletedNum  *prometheus.GaugeVec
 	jsStreamStateSubjectNum  *prometheus.GaugeVec
+	jsStreamStateFirstSeq    *prometheus.GaugeVec
+	jsStreamStateLastSeq     *prometheus.GaugeVec
+	jsStreamSubjectMsgs      *prometheus.GaugeVec
+	jsStreamSubjectsSkipped  *prometheus.GaugeVec
 
 	jsConsumerConfig                *prometheus.GaugeVec
 	jsConsumerState                 *prometheus.GaugeVec
@@ -116,6 +127,28 @@ func NewJetStreamConfigListMetrics(registry *prometheus.Registry, constLabels pr
 		jsStreamStateSubjectNum: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_subject_number"),
 			Help:        "subject number for streams",
+			ConstLabels: constLabels,
+		}, streamLabel),
+		jsStreamStateFirstSeq: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_first_sequence"),
+			Help:        "Sequence number of the oldest message still held by the stream",
+			ConstLabels: constLabels,
+		}, streamLabel),
+		jsStreamStateLastSeq: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: prometheus.BuildFQName("nats", "jetstream", "stream_last_sequence"),
+			// Monotonic, so rate() over this is the stream's true publish rate.
+			// The message count is not: retention ages messages out from under it.
+			Help:        "Sequence number of the newest message published to the stream",
+			ConstLabels: constLabels,
+		}, streamLabel),
+		jsStreamSubjectMsgs: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_subject_messages"),
+			Help:        "Messages currently held by the stream, per subject (requires per-subject collection)",
+			ConstLabels: constLabels,
+		}, streamSubjectLabels),
+		jsStreamSubjectsSkipped: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name:        prometheus.BuildFQName("nats", "jetstream", "stream_subjects_collection_skipped"),
+			Help:        "1 when per-subject collection was skipped for this stream because it exceeds the subject cap",
 			ConstLabels: constLabels,
 		}, streamLabel),
 		jsConsumerRaftInfo: prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -218,6 +251,10 @@ func NewJetStreamConfigListMetrics(registry *prometheus.Registry, constLabels pr
 	registry.MustRegister(metrics.jsStreamStateSubjectNum)
 	registry.MustRegister(metrics.jsStreamStateDeletedNum)
 	registry.MustRegister(metrics.jsStreamStateConsumerNum)
+	registry.MustRegister(metrics.jsStreamStateFirstSeq)
+	registry.MustRegister(metrics.jsStreamStateLastSeq)
+	registry.MustRegister(metrics.jsStreamSubjectMsgs)
+	registry.MustRegister(metrics.jsStreamSubjectsSkipped)
 
 	registry.MustRegister(metrics.jsConsumerRaftInfo)
 	registry.MustRegister(metrics.jsConsumerRaftPeerInfo)
@@ -242,6 +279,26 @@ func NewJetStreamConfigListMetrics(registry *prometheus.Registry, constLabels pr
 	return metrics
 }
 
+// JSConfigListenerOptions tunes the JetStream config/state poll loop.
+type JSConfigListenerOptions struct {
+	// ScrapeInterval is how often the stream/consumer poll loop runs.
+	// Zero selects DefaultScrapeInterval.
+	ScrapeInterval time.Duration
+
+	// Subjects enables per-subject stream state collection. Off by default:
+	// it costs one extra STREAM.INFO request per stream, and the server
+	// assembles per-subject state in O(subjects) on the stream leader.
+	Subjects bool
+
+	// SubjectStreams restricts per-subject collection to these stream names.
+	// Empty means every stream, still bounded by SubjectsMax.
+	SubjectStreams []string
+
+	// SubjectsMax skips per-subject collection for any stream reporting more
+	// subjects than this. Zero selects DefaultSubjectsMaxPerStream.
+	SubjectsMax int
+}
+
 // jsConfigListListener polls JetStream stream/consumer configuration and state on an
 // interval and exposes the result as prometheus metrics.
 type jsConfigListListener struct {
@@ -251,15 +308,40 @@ type jsConfigListListener struct {
 	provider   ConnProvider
 	logger     *logrus.Logger
 	metrics    *JSStreamConfigMetrics
-	conn       Conn
-	js         nats.JetStreamContext
+	opts       JSConfigListenerOptions
+	// subjectStreams is the set form of opts.SubjectStreams; nil means "all streams".
+	subjectStreams map[string]struct{}
+	conn           Conn
+	js             nats.JetStreamContext
 }
 
-func NewJetStreamConfigListener(provider ConnProvider, logger *logrus.Logger, metrics *JSStreamConfigMetrics) *jsConfigListListener {
+func NewJetStreamConfigListener(
+	provider ConnProvider,
+	logger *logrus.Logger,
+	metrics *JSStreamConfigMetrics,
+	opts JSConfigListenerOptions,
+) *jsConfigListListener {
+	if opts.ScrapeInterval <= 0 {
+		opts.ScrapeInterval = DefaultScrapeInterval
+	}
+	if opts.SubjectsMax <= 0 {
+		opts.SubjectsMax = DefaultSubjectsMaxPerStream
+	}
+
+	var subjectStreams map[string]struct{}
+	if len(opts.SubjectStreams) > 0 {
+		subjectStreams = make(map[string]struct{}, len(opts.SubjectStreams))
+		for _, name := range opts.SubjectStreams {
+			subjectStreams[name] = struct{}{}
+		}
+	}
+
 	return &jsConfigListListener{
-		provider: provider,
-		logger:   logger,
-		metrics:  metrics,
+		provider:       provider,
+		logger:         logger,
+		metrics:        metrics,
+		opts:           opts,
+		subjectStreams: subjectStreams,
 	}
 }
 
@@ -282,6 +364,7 @@ func (o *jsConfigListListener) gatherData(ctx context.Context, interval time.Dur
 					return
 				}
 				o.StreamHandler(str)
+				o.SubjectsHandler(js, str)
 				for con := range js.Consumers(str.Config.Name) {
 					if ctx.Err() != nil {
 						return
@@ -319,7 +402,7 @@ func (o *jsConfigListListener) Start(natsCtx *NatsContext) error {
 
 	o.cancelLoop = cancelFunc
 	o.wg.Add(1)
-	go o.gatherData(ctx, DefaultScrapeInterval)
+	go o.gatherData(ctx, o.opts.ScrapeInterval)
 	return nil
 }
 
@@ -408,6 +491,26 @@ func (o *jsConfigListListener) StreamHandler(streamInfo *nats.StreamInfo) {
 		},
 	).Set(float64(streamInfo.State.Consumers))
 
+	// Sequence numbers come free with the STREAM.LIST response the poll loop
+	// already makes, so these cost no extra request.
+	o.metrics.jsStreamStateFirstSeq.DeletePartialMatch(prometheus.Labels{
+		"stream_name": streamInfo.Config.Name,
+	})
+	o.metrics.jsStreamStateLastSeq.DeletePartialMatch(prometheus.Labels{
+		"stream_name": streamInfo.Config.Name,
+	})
+
+	o.metrics.jsStreamStateFirstSeq.With(
+		prometheus.Labels{
+			"stream_name": streamInfo.Config.Name,
+		},
+	).Set(float64(streamInfo.State.FirstSeq))
+	o.metrics.jsStreamStateLastSeq.With(
+		prometheus.Labels{
+			"stream_name": streamInfo.Config.Name,
+		},
+	).Set(float64(streamInfo.State.LastSeq))
+
 	// Stream Limits
 	o.metrics.jsStreamLimitMaxMsgs.DeletePartialMatch(prometheus.Labels{
 		"stream_name": streamInfo.Config.Name,
@@ -464,6 +567,58 @@ func (o *jsConfigListListener) StreamHandler(streamInfo *nats.StreamInfo) {
 		},
 	).Set(float64(streamInfo.Config.MaxConsumers))
 }
+
+// SubjectsHandler exposes the stream's per-subject message counts. This needs a
+// second STREAM.INFO request carrying a subjects filter — STREAM.LIST does not
+// return per-subject state — so it only runs when explicitly enabled, and only
+// for streams whose subject count stays under the configured cap.
+func (o *jsConfigListListener) SubjectsHandler(js nats.JetStreamContext, streamInfo *nats.StreamInfo) {
+	if !o.opts.Subjects || streamInfo == nil || js == nil {
+		return
+	}
+
+	name := streamInfo.Config.Name
+	if o.subjectStreams != nil {
+		if _, ok := o.subjectStreams[name]; !ok {
+			return
+		}
+	}
+
+	streamLabels := prometheus.Labels{"stream_name": name}
+	o.metrics.jsStreamSubjectMsgs.DeletePartialMatch(streamLabels)
+	o.metrics.jsStreamSubjectsSkipped.DeletePartialMatch(streamLabels)
+
+	// NumSubjects comes from the STREAM.LIST response, so this cap is applied
+	// before paying for the per-subject request rather than after.
+	if streamInfo.State.NumSubjects > uint64(o.opts.SubjectsMax) {
+		o.logger.Warnf(
+			"skipping per-subject collection for stream %q: %d subjects exceeds the cap of %d",
+			name, streamInfo.State.NumSubjects, o.opts.SubjectsMax,
+		)
+		o.metrics.jsStreamSubjectsSkipped.With(streamLabels).Set(1)
+		return
+	}
+	o.metrics.jsStreamSubjectsSkipped.With(streamLabels).Set(0)
+
+	info, err := js.StreamInfo(name, &nats.StreamInfoRequest{SubjectsFilter: ">"})
+	if err != nil {
+		o.logger.Warnf("failed to fetch per-subject state for stream %q: %v", name, err)
+		return
+	}
+	if info == nil {
+		return
+	}
+
+	for subject, msgs := range info.State.Subjects {
+		o.metrics.jsStreamSubjectMsgs.With(
+			prometheus.Labels{
+				"stream_name": name,
+				"subject":     subject,
+			},
+		).Set(float64(msgs))
+	}
+}
+
 func convertBoolToString(value bool) string {
 	if value {
 		return "true"

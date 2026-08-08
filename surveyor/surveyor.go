@@ -93,6 +93,10 @@ type Options struct {
 	JszLimit             int
 	JszLeadersOnly       bool
 	JszFilters           []JszFilter
+	JSScrapeInterval     time.Duration
+	JSSubjects           bool
+	JSSubjectStreams     []string
+	JSSubjectsMax        int
 	SysReqPrefix         string
 	Logger               *logrus.Logger    // not exposed by CLI
 	Provider             ConnProvider      // not exposed by CLI
@@ -117,6 +121,8 @@ func GetDefaultOptions() *Options {
 		PollTimeout:        DefaultPollTimeout,
 		ExpectedServers:    DefaultExpectedServers,
 		ServerResponseWait: DefaultServerResponseWait,
+		JSScrapeInterval:   DefaultScrapeInterval,
+		JSSubjectsMax:      DefaultSubjectsMaxPerStream,
 		Logger:             logrus.New(),
 	}
 	return opts
@@ -162,7 +168,12 @@ func NewSurveyor(opts *Options) (*Surveyor, error) {
 	jsFsWatcher := newJetStreamAdvisoryFSWatcher(opts.Logger, jsAdvisoryManager)
 
 	jsConfigListMetrics := NewJetStreamConfigListMetrics(promRegistry, opts.ConstLabels)
-	jsConfigListener := NewJetStreamConfigListener(opts.Provider, opts.Logger, jsConfigListMetrics)
+	jsConfigListener := NewJetStreamConfigListener(opts.Provider, opts.Logger, jsConfigListMetrics, JSConfigListenerOptions{
+		ScrapeInterval: opts.JSScrapeInterval,
+		Subjects:       opts.JSSubjects,
+		SubjectStreams: opts.JSSubjectStreams,
+		SubjectsMax:    opts.JSSubjectsMax,
+	})
 
 	return &Surveyor{
 		connProvider:         opts.Provider,

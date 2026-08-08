@@ -49,6 +49,11 @@ Flags:
       --accounts-detailed                   Export granular per-account bytes and message metrics (NATS_SURVEYOR_ACCOUNTS_DETAILED)
       --gatewayz                            Export gateway metrics (NATS_SURVEYOR_GATEWAYZ)
       --raftz                               Export metalayer Raft group metrics from raftz endpoint (NATS_SURVEYOR_RAFTZ)
+      --expvarz                             Export Go runtime memstats from expvarz endpoint (alloc/sys/heap*/mallocs/frees per server) (NATS_SURVEYOR_EXPVARZ)
+      --js-scrape-interval duration         How often to poll JetStream stream and consumer state (NATS_SURVEYOR_JS_SCRAPE_INTERVAL) (default 10s)
+      --js-subjects                         Export per-subject message counts for JetStream streams (NATS_SURVEYOR_JS_SUBJECTS)
+      --js-subjects-streams strings         Restrict --js-subjects collection to these stream names (default: every stream) (NATS_SURVEYOR_JS_SUBJECTS_STREAMS)
+      --js-subjects-max int                 Skip per-subject collection for streams reporting more subjects than this (NATS_SURVEYOR_JS_SUBJECTS_MAX) (default 100)
       --jsz string                          Export jsz metrics optionally, one of: all|streams|consumers (NATS_SURVEYOR_JSZ)
       --jsz-limit int                       Limit the number of returned account jsz metrics (NATS_SURVEYOR_JSZ_LIMIT) (default 1024)
       --jsz-leaders-only                    Fetch jsz metrics from stream and consumer leaders only (NATS_SURVEYOR_JSZ_LEADERS_ONLY)
@@ -167,6 +172,72 @@ and picking up `num_pending`, `num_ack_pending` and `num_waiting` from the consu
                 --jsz-leaders-only \
                 --jsz-filter=consumer_num_pending,consumer_num_ack_pending,consumer_num_waiting
 ```
+
+## Stream Publish Rate and Per-Subject Metrics
+
+The JetStream config poll loop exports two sequence gauges for every stream, at
+no extra request cost — they come from the `STREAM.LIST` response the loop
+already makes:
+
+```
+nats_jetstream_stream_first_sequence{stream_name}
+nats_jetstream_stream_last_sequence{stream_name}
+```
+
+`last_sequence` is the metric to use for publish rate:
+
+```
+rate(nats_jetstream_stream_last_sequence[5m])
+```
+
+It is monotonic, so it counts every publish. A message count is *not* a
+substitute — under `limits` retention old messages age out from under the
+counter, so a rate derived from it undercounts publishes whenever retention is
+active, and reads as zero for a stream in steady state.
+
+### Per-subject counts
+
+`--js-subjects` additionally exports how many messages each subject currently
+holds:
+
+```
+nats_jetstream_stream_subject_messages{stream_name, subject}
+```
+
+This is **off by default** and should stay off unless you want it, for two
+reasons:
+
+- It costs one extra `STREAM.INFO` request per stream per interval, and the
+  server assembles per-subject state in O(subjects) on the *stream leader*.
+- Every subject becomes its own Prometheus series. A stream whose config
+  subject is a wildcard (`events.>`) has an unbounded subject space at runtime.
+
+Two guards bound that. `--js-subjects-max` (default 100) skips any stream
+reporting more subjects than the cap — the cap is checked against the
+`num_subjects` already in the `STREAM.LIST` response, so an oversized stream
+costs nothing. A skipped stream is reported rather than silently dropped:
+
+```
+nats_jetstream_stream_subjects_collection_skipped{stream_name}
+```
+
+which is `1` for a stream over the cap and `0` for one being collected. Alert on
+it if you rely on per-subject data. `--js-subjects-streams` restricts collection
+to named streams, which is the safer setting when only a few streams matter:
+
+```
+nats-surveyor --js-subjects \
+              --js-subjects-streams=rides,authentication \
+              --js-subjects-max=200
+```
+
+Note that subjects describe the *event type*, not the publisher. If a stream's
+subject space encodes event kinds (`ride.accepted`, `ride.finished`), these
+metrics break volume down by kind — they cannot attribute a message to the
+service that published it.
+
+`--js-scrape-interval` (default 10s) controls how often the whole loop runs.
+Raise it when per-subject collection is enabled on a busy cluster.
 
 ## Docker Compose
 

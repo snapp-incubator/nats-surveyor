@@ -36,4 +36,17 @@ prometheus:
 # Extra command-line flags appended to nats-surveyor's args.
 # Useful for opting into optional scrapes like --raftz or --expvarz
 # without bumping the chart for every new flag.
+#
+# Per-subject JetStream stream state is opt-in here too, since it costs an extra
+# STREAM.INFO request per stream and the server builds that state in
+# O(subjects) on the stream leader:
+#
+#   extraArgs:
+#     - --js-subjects
+#     - --js-subjects-streams=rides,authentication
+#     - --js-subjects-max=200
+#     - --js-scrape-interval=30s
+#
+# Restrict to named streams unless every stream's subject space is known to be
+# bounded — one wildcard stream turns every subject into its own series.
 extraArgs: []

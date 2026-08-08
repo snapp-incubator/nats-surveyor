@@ -282,6 +282,28 @@ func init() {
 	)
 	_ = viper.BindPFlag("jsz", rootCmd.Flags().Lookup("jsz"))
 
+	// js-scrape-interval
+	rootCmd.Flags().Duration("js-scrape-interval", surveyor.DefaultScrapeInterval,
+		"How often to poll JetStream stream and consumer state")
+	_ = viper.BindPFlag("js-scrape-interval", rootCmd.Flags().Lookup("js-scrape-interval"))
+
+	// js-subjects
+	// Off by default: one extra STREAM.INFO request per stream per interval, and
+	// the server builds per-subject state in O(subjects) on the stream leader.
+	rootCmd.Flags().Bool("js-subjects", false,
+		"Export per-subject message counts for JetStream streams")
+	_ = viper.BindPFlag("js-subjects", rootCmd.Flags().Lookup("js-subjects"))
+
+	// js-subjects-streams
+	rootCmd.Flags().StringSlice("js-subjects-streams", nil,
+		"Restrict --js-subjects collection to these stream names (default: every stream)")
+	_ = viper.BindPFlag("js-subjects-streams", rootCmd.Flags().Lookup("js-subjects-streams"))
+
+	// js-subjects-max
+	rootCmd.Flags().Int("js-subjects-max", surveyor.DefaultSubjectsMaxPerStream,
+		"Skip per-subject collection for streams reporting more subjects than this")
+	_ = viper.BindPFlag("js-subjects-max", rootCmd.Flags().Lookup("js-subjects-max"))
+
 	// jsz limit
 	rootCmd.Flags().Int("jsz-limit", surveyor.DefaultJszLimit, "Limit the number of returned account jsz metrics")
 	_ = viper.BindPFlag("jsz-limit", rootCmd.Flags().Lookup("jsz-limit"))
@@ -353,6 +375,10 @@ func getSurveyorOpts() *surveyor.Options {
 	opts.Gatewayz = viper.GetBool("gatewayz")
 	opts.Raftz = viper.GetBool("raftz")
 	opts.Expvarz = viper.GetBool("expvarz")
+	opts.JSScrapeInterval = viper.GetDuration("js-scrape-interval")
+	opts.JSSubjects = viper.GetBool("js-subjects")
+	opts.JSSubjectStreams = viper.GetStringSlice("js-subjects-streams")
+	opts.JSSubjectsMax = viper.GetInt("js-subjects-max")
 	opts.Jsz = collectJsz
 	opts.JszLimit = viper.GetInt("jsz-limit")
 	opts.JszLeadersOnly = viper.GetBool("jsz-leaders-only")
