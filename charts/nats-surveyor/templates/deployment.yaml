@@ -74,6 +74,11 @@ spec:
             {{- end }}
       volumes:
         - name: surveyor-config-volume
+          {{- if .Values.jetstream.existingSecret }}
+          secret:
+            secretName: {{ .Values.jetstream.existingSecret }}
+          {{- else }}
           configMap:
             name: {{ .Release.Name }}-nats-surveyor
+          {{- end }}
 {{- end }}
