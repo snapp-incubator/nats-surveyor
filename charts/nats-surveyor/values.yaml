@@ -13,6 +13,29 @@ nats:
 auth:
   enabled: true
 
+# JetStream advisory collection. Surveyor opens a second connection, separate
+# from the --user/--password monitoring one, to subscribe to $JS.EVENT.ADVISORY
+# and $JS.EVENT.METRIC for a single account.
+jetstream:
+  # Account to collect advisories for.
+  account: "$G"
+  # Name of an existing Secret holding the advisory account config, mounted at
+  # /etc/surveyor/jetstream in place of the generated ConfigMap. Set this when
+  # the target account requires authentication: the generated ConfigMap carries
+  # no credentials, so the advisory connection is anonymous and a server that
+  # requires auth on that account rejects it with an Authorization Violation.
+  #
+  # The Secret holds one or more <id>.json files in surveyor's advisory config
+  # format, which accepts "username"/"password" (also "credential", "nkey",
+  # "token", and tls_* paths):
+  #
+  #   kubectl create secret generic nats-surveyor-advisory \
+  #     --from-literal=rides.json='{"name":"$G","username":"...","password":"..."}'
+  #
+  # Keeping it a Secret rather than templating the password through values keeps
+  # the credential out of the rendered chart and out of git.
+  existingSecret: ""
+
 cluster:
   size: 5
 

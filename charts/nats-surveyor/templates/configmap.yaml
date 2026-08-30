@@ -1,4 +1,4 @@
-{{- if .Values.enabled }}
+{{- if and .Values.enabled (not .Values.jetstream.existingSecret) }}
 # templates/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -8,6 +8,6 @@ metadata:
 data:
   rides.json: |-
     {
-    "name":       "$G"
+    "name":       "{{ .Values.jetstream.account }}"
     }
 {{- end }}
