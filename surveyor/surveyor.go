@@ -93,6 +93,7 @@ type Options struct {
 	JszLimit             int
 	JszLeadersOnly       bool
 	JszFilters           []JszFilter
+	JSConfigList         bool
 	JSScrapeInterval     time.Duration
 	JSSubjects           bool
 	JSSubjectStreams     []string
@@ -121,6 +122,7 @@ func GetDefaultOptions() *Options {
 		PollTimeout:        DefaultPollTimeout,
 		ExpectedServers:    DefaultExpectedServers,
 		ServerResponseWait: DefaultServerResponseWait,
+		JSConfigList:       true,
 		JSScrapeInterval:   DefaultScrapeInterval,
 		JSSubjectsMax:      DefaultSubjectsMaxPerStream,
 		Logger:             logrus.New(),
@@ -473,6 +475,17 @@ func (s *Surveyor) startJetStreamAdvisories() {
 }
 
 func (s *Surveyor) startJetStreamConfigList() {
+	// Unlike the statz collector, this poller does not use the monitoring
+	// connection: it opens its own client connection into a JetStream account
+	// and walks js.Streams(). A deployment that has no such account to reach --
+	// no JetStream, or an account surveyor holds no credentials for -- has
+	// nothing for it to do, and starting it there only produces a connection
+	// error that is never retried.
+	if !s.opts.JSConfigList {
+		s.logger.Debugln("skipping JetStream config list listener, disabled by configuration")
+		return
+	}
+
 	natsCtx := &NatsContext{
 		Username: s.opts.NATSAuthUser,
 		Password: s.opts.NATSAuthPassword,

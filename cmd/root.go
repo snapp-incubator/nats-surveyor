@@ -282,6 +282,16 @@ func init() {
 	)
 	_ = viper.BindPFlag("jsz", rootCmd.Flags().Lookup("jsz"))
 
+	// js-config-list
+	// On by default, so existing deployments are unaffected. Unlike the statz
+	// collector this poller opens its own client connection into a JetStream
+	// account rather than using the monitoring connection, so it has nothing to
+	// do where surveyor holds no credentials for that account -- and a failed
+	// start is logged once and never retried.
+	rootCmd.Flags().Bool("js-config-list", true,
+		"Poll JetStream stream and consumer configuration and state")
+	_ = viper.BindPFlag("js-config-list", rootCmd.Flags().Lookup("js-config-list"))
+
 	// js-scrape-interval
 	rootCmd.Flags().Duration("js-scrape-interval", surveyor.DefaultScrapeInterval,
 		"How often to poll JetStream stream and consumer state")
@@ -375,6 +385,7 @@ func getSurveyorOpts() *surveyor.Options {
 	opts.Gatewayz = viper.GetBool("gatewayz")
 	opts.Raftz = viper.GetBool("raftz")
 	opts.Expvarz = viper.GetBool("expvarz")
+	opts.JSConfigList = viper.GetBool("js-config-list")
 	opts.JSScrapeInterval = viper.GetDuration("js-scrape-interval")
 	opts.JSSubjects = viper.GetBool("js-subjects")
 	opts.JSSubjectStreams = viper.GetStringSlice("js-subjects-streams")

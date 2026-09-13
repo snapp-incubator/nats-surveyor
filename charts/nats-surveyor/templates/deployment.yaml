@@ -69,6 +69,9 @@ spec:
             - "--auth-password"
             - "$(CLOUD_PASSWORD)"
             {{- end }}
+            {{- if not .Values.jetstream.configList }}
+            - "--js-config-list=false"
+            {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

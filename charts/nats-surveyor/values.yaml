@@ -19,6 +19,16 @@ auth:
 jetstream:
   # Account to collect advisories for.
   account: "$G"
+  # Poll JetStream stream and consumer configuration and state.
+  #
+  # This poller is separate from the advisory listener and from the --user
+  # monitoring connection: it opens its own client connection into a JetStream
+  # account and walks the stream list. Turn it off where surveyor has no such
+  # account to reach -- a cluster with no JetStream, or one whose JetStream
+  # accounts surveyor holds no credentials for. Left on, it logs
+  # "failed to start JetStream config list listener: nats: Authorization
+  # Violation" once at startup and never retries.
+  configList: true
   # Name of an existing Secret holding the advisory account config, mounted at
   # /etc/surveyor/jetstream in place of the generated ConfigMap. Set this when
   # the target account requires authentication: the generated ConfigMap carries
