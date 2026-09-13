@@ -87,3 +87,32 @@ func TestTokenFileEnvOverride(t *testing.T) {
 		t.Fatalf("env override failed: got %q, want %q", got, want)
 	}
 }
+
+func TestJSConfigListDefaultsOn(t *testing.T) {
+	f := rootCmd.Flags().Lookup("js-config-list")
+	if f == nil {
+		t.Fatalf("expected --js-config-list flag to be registered on rootCmd")
+	}
+	if got, want := f.DefValue, "true"; got != want {
+		t.Fatalf("--js-config-list default: got %q, want %q -- existing deployments must keep polling", got, want)
+	}
+}
+
+func TestJSConfigListDisable(t *testing.T) {
+	f := rootCmd.Flags().Lookup("js-config-list")
+	if f == nil {
+		t.Fatalf("expected --js-config-list flag to be registered on rootCmd")
+	}
+	original := f.Value.String()
+	t.Cleanup(func() {
+		_ = f.Value.Set(original)
+		f.Changed = false
+	})
+
+	if err := rootCmd.Flags().Set("js-config-list", "false"); err != nil {
+		t.Fatalf("failed setting flag: %v", err)
+	}
+	if opts := getSurveyorOpts(); opts.JSConfigList {
+		t.Fatal("flag wiring failed: --js-config-list=false left Options.JSConfigList true")
+	}
+}

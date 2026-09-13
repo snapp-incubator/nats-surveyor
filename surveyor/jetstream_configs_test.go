@@ -210,3 +210,19 @@ func TestJetStreamConfigs_ListenerDefaults(t *testing.T) {
 		t.Fatalf("expected an empty allowlist to mean all streams, got %v", listener.subjectStreams)
 	}
 }
+
+// The config list poller opens its own client connection into a JetStream
+// account, so a deployment with no such account to reach must be able to turn
+// it off. jsConfigListListener is deliberately left nil here: with the gate in
+// place it is never touched, so this test panics if the gate is removed.
+func TestJetStreamConfigs_ConfigListDisabled(t *testing.T) {
+	logger := logrus.New()
+	logger.SetLevel(logrus.FatalLevel)
+
+	s := &Surveyor{
+		logger: logger,
+		opts:   Options{JSConfigList: false},
+	}
+
+	s.startJetStreamConfigList()
+}
